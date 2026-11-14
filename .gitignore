@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 가상환경 (사용 안 하지만 혹시 대비)
+venv/
+.venv/
+env/
+
+# OS
+.DS_Store
+
+# 참고: academy.db는 "응용프로그램+DB 통합 산출물"이므로 커밋에 포함합니다.
+# 만약 각자 로컬 DB를 쓰고 싶으면 아래 주석을 해제하세요.
+# academy.db
