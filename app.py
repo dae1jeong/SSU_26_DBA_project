@@ -5,7 +5,7 @@ app.py - Tkinter GUI (프론트엔드)
 
 실행: python app.py
 - 실행 시 academy.db가 없으면 자동 생성(스키마 + 샘플데이터).
-- 탭: 학생관리 / 반관리 / 수강등록 / 결제 / 조회
+- 탭: 학생 관리 / 수강 과정 관리 / 반 관리 / 수강 등록 / 결제
 - 모든 DB 작업은 db.py 함수를 통해서만 수행 (화면/DB 분리)
 
 [팀원 보완 포인트]
@@ -55,11 +55,13 @@ class AcademyApp(tk.Tk):
         nb.pack(fill="both", expand=True, padx=8, pady=8)
 
         self.tab_student = StudentTab(nb)
+        self.tab_course = CourseTab(nb)
         self.tab_class = ClassTab(nb)
         self.tab_enroll = EnrollTab(nb)
         self.tab_payment = PaymentTab(nb)
 
         nb.add(self.tab_student, text="학생 관리")
+        nb.add(self.tab_course, text="수강 과정 관리")
         nb.add(self.tab_class, text="반 관리")
         nb.add(self.tab_enroll, text="수강 등록")
         nb.add(self.tab_payment, text="결제")
@@ -145,6 +147,72 @@ class StudentTab(ttk.Frame):
                 r["student_id"], r["name"], r["school"], r["grade"],
                 r["day_of_admission"], r["contact_number"], r["student_classification"],
             ))
+
+
+# ------------------------------------------------------------
+# 수강 과정 관리 탭
+# ------------------------------------------------------------
+class CourseTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master)
+        form = ttk.LabelFrame(self, text="수강 과정 등록")
+        form.pack(fill="x", padx=8, pady=8)
+
+        ttk.Label(form, text="과정명").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        self.e_name = ttk.Entry(form)
+        self.e_name.grid(row=0, column=1, sticky="we", padx=6, pady=4)
+
+        ttk.Label(form, text="수강비(원)").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.e_fee = ttk.Entry(form)
+        self.e_fee.grid(row=1, column=1, sticky="we", padx=6, pady=4)
+
+        ttk.Button(form, text="과정 등록", command=self.on_add).grid(
+            row=2, column=0, columnspan=2, pady=6,
+        )
+        form.columnconfigure(1, weight=1)
+
+        listing = ttk.LabelFrame(self, text="등록된 수강 과정")
+        listing.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree = ttk.Treeview(listing, columns=("id", "name", "fee"), show="headings", height=12)
+        for c, title, width in [
+            ("id", "ID", 60), ("name", "과정명", 300), ("fee", "수강비(원)", 150),
+        ]:
+            self.tree.heading(c, text=title)
+            self.tree.column(c, width=width, anchor="center")
+        scrollbar = ttk.Scrollbar(listing, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.pack(fill="both", expand=True)
+        self.refresh()
+
+    def on_add(self):
+        name = self.e_name.get().strip()
+        if not name:
+            messagebox.showwarning("입력 오류", "과정명은 필수입니다.")
+            return
+        try:
+            fee = int(self.e_fee.get().strip())
+        except ValueError:
+            messagebox.showwarning("입력 오류", "수강비는 1원 이상의 정수로 입력하세요.")
+            return
+        if fee <= 0:
+            messagebox.showwarning("입력 오류", "수강비는 1원 이상의 정수로 입력하세요.")
+            return
+        try:
+            db.add_course(name, fee)
+        except Exception as ex:
+            messagebox.showerror("오류", f"과정 등록에 실패했습니다.\n{ex}")
+            return
+        messagebox.showinfo("완료", f"'{name}' 과정이 등록되었습니다.")
+        self.e_name.delete(0, "end")
+        self.e_fee.delete(0, "end")
+        self.refresh()
+
+    def refresh(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for r in db.list_courses():
+            self.tree.insert("", "end", values=(r["course_id"], r["name"], f'{r["fee"]:,}'))
 
 
 # ------------------------------------------------------------
