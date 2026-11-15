@@ -101,6 +101,7 @@ class StudentTab(ttk.Frame):
 
         # 목록
         cols = ("id", "name", "school", "grade", "date", "contact", "cls")
+        ttk.Label(self, text="목록의 분류 칸을 클릭하면 학생 상태를 변경할 수 있습니다.").pack(anchor="w", padx=8)
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12)
         for c, t, w in [
             ("id", "ID", 40), ("name", "이름", 90), ("school", "학교", 90),
@@ -110,8 +111,44 @@ class StudentTab(ttk.Frame):
             self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor="center")
         self.tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self.tree.bind("<ButtonRelease-1>", self.on_classification_click)
 
         self.refresh()
+
+    def on_classification_click(self, event):
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != "#7":
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        self.tree.selection_set(item)
+        student_id = int(self.tree.set(item, "id"))
+        current = self.tree.set(item, "cls")
+        menu = tk.Menu(self, tearoff=False)
+        selected = tk.StringVar(value=current)
+        for classification in ("ACTIVE", "INACTIVE", "BLACK"):
+            menu.add_radiobutton(
+                label=classification, variable=selected, value=classification,
+                command=lambda value=classification: self.change_classification(item, student_id, value),
+            )
+        # 메뉴가 열린 동안 선택 변수와 메뉴 객체를 유지한다.
+        self.classification_menu = menu
+        self.classification_selection = selected
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def change_classification(self, item, student_id, classification):
+        try:
+            db.update_student_classification(student_id, classification)
+        except Exception as ex:
+            messagebox.showerror("오류", f"학생 상태를 변경하지 못했습니다.\n{ex}")
+            return
+        if self.tree.exists(item):
+            self.tree.set(item, "cls", classification)
 
     def _row(self, parent, label, r):
         ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", padx=6, pady=4)
@@ -240,14 +277,33 @@ class ClassTab(ttk.Frame):
         self.e_name = ttk.Entry(form)
         self.e_name.grid(row=3, column=1, sticky="we", padx=6, pady=4)
 
-        ttk.Button(form, text="반 생성", command=self.on_add).grid(row=4, column=0, columnspan=2, pady=6)
+        self.is_short_course = False
+        self.period_form = ttk.Frame(form)
+        self.period_form.grid(row=4, column=0, columnspan=2, sticky="we")
+        self.period_form.columnconfigure(1, weight=1)
+        ttk.Label(self.period_form, text="시작일(YYYY-MM-DD)").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        self.e_start_date = ttk.Entry(self.period_form)
+        self.e_start_date.grid(row=0, column=1, sticky="we", padx=6, pady=4)
+        ttk.Label(self.period_form, text="종료일(YYYY-MM-DD)").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.e_end_date = ttk.Entry(self.period_form)
+        self.e_end_date.grid(row=1, column=1, sticky="we", padx=6, pady=4)
+        self.period_form.grid_remove()
+
+        buttons = ttk.Frame(form)
+        buttons.grid(row=5, column=0, columnspan=2, pady=6)
+        self.btn_add = ttk.Button(buttons, text="반 생성", command=self.on_add)
+        self.btn_add.pack(side="left", padx=4)
+        self.btn_short_course = ttk.Button(buttons, text="특강 생성", command=self.toggle_short_course)
+        self.btn_short_course.pack(side="left", padx=4)
         form.columnconfigure(1, weight=1)
 
-        cols = ("id", "name", "grade", "course", "teacher")
+        cols = ("id", "name", "grade", "course", "teacher", "start_date", "end_date")
+        ttk.Label(self, text="반을 더블클릭하면 해당 반의 학생 명단을 볼 수 있습니다.").pack(anchor="w", padx=8)
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12)
         for c, t, w in [
             ("id", "ID", 40), ("name", "반 이름", 120), ("grade", "학년", 50),
             ("course", "과정", 160), ("teacher", "선생님", 100),
+            ("start_date", "특강 시작일", 100), ("end_date", "특강 종료일", 100),
         ]:
             self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor="center")
@@ -255,7 +311,61 @@ class ClassTab(ttk.Frame):
 
         self.courses = []
         self.teachers = []
+        self.tree.bind("<Double-1>", self.show_class_students)
         self.refresh()
+
+    def show_class_students(self, event):
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        class_id = int(self.tree.set(item, "id"))
+        class_name = self.tree.set(item, "name")
+        try:
+            students = db.list_students_by_class(class_id)
+        except Exception as ex:
+            messagebox.showerror("오류", f"학생 명단을 불러오지 못했습니다.\n{ex}")
+            return
+
+        window = tk.Toplevel(self)
+        window.title(f"{class_name} - 학생 명단")
+        window.geometry("600x400")
+        window.transient(self.winfo_toplevel())
+        ttk.Label(window, text=f"{class_name} · 수강 등록 학생 {len(students)}명 (수료·취소 포함)").pack(
+            anchor="w", padx=12, pady=12,
+        )
+        frame = ttk.Frame(window)
+        frame.pack(fill="both", expand=True, padx=12, pady=4)
+        tree = ttk.Treeview(frame, columns=("id", "name", "school", "status"), show="headings")
+        for column, title, width in [
+            ("id", "학생 ID", 70), ("name", "이름", 120),
+            ("school", "학교", 160), ("status", "수강 상태", 120),
+        ]:
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="center")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        tree.pack(fill="both", expand=True)
+        for student in students:
+            tree.insert("", "end", values=(
+                student["student_id"], student["name"], student["school"] or "", student["status"],
+            ))
+        if not students:
+            ttk.Label(window, text="등록된 학생이 없습니다.").pack(pady=6)
+        ttk.Button(window, text="닫기", command=window.destroy).pack(pady=8)
+
+    def toggle_short_course(self):
+        self.is_short_course = not self.is_short_course
+        if self.is_short_course:
+            self.period_form.grid()
+            self.btn_add.config(text="특강 등록")
+            self.btn_short_course.config(text="일반 반으로 전환")
+        else:
+            self.period_form.grid_remove()
+            self.btn_add.config(text="반 생성")
+            self.btn_short_course.config(text="특강 생성")
 
     def on_add(self):
         if not self.cb_course.current() >= 0 or not self.e_name.get().strip():
@@ -268,10 +378,18 @@ class ClassTab(ttk.Frame):
                 teacher_id = self.teachers[self.cb_teacher.current()]["teacher_id"]
             grade = self.e_grade.get().strip()
             grade = int(grade) if grade else None
-            db.add_class(course_id, teacher_id, grade, self.e_name.get().strip())
-            messagebox.showinfo("완료", "반이 생성되었습니다.")
+            if self.is_short_course:
+                db.add_short_course(
+                    course_id, teacher_id, grade, self.e_name.get().strip(),
+                    self.e_start_date.get().strip(), self.e_end_date.get().strip(),
+                )
+            else:
+                db.add_class(course_id, teacher_id, grade, self.e_name.get().strip())
+            messagebox.showinfo("완료", "특강이 생성되었습니다." if self.is_short_course else "반이 생성되었습니다.")
             self.e_name.delete(0, "end")
             self.e_grade.delete(0, "end")
+            self.e_start_date.delete(0, "end")
+            self.e_end_date.delete(0, "end")
             self.refresh()
         except Exception as ex:
             messagebox.showerror("오류", str(ex))
@@ -286,6 +404,7 @@ class ClassTab(ttk.Frame):
         for r in db.list_classes():
             self.tree.insert("", "end", values=(
                 r["class_id"], r["class_name"], r["grade"], r["course_name"], r["teacher_name"],
+                r["start_date"] or "", r["end_date"] or "",
             ))
 
 

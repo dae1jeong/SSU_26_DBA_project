@@ -14,6 +14,7 @@ db.py - 데이터베이스 접근 계층 (백엔드)
 
 import os
 import sqlite3
+from datetime import date
 
 # 이 파일이 있는 폴더 기준으로 academy.db 경로 지정 (어느 위치에서 실행해도 동일)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -127,16 +128,45 @@ def add_class(course_id, teacher_id, grade, class_name):
     conn.close()
 
 
+def add_short_course(course_id, teacher_id, grade, class_name, start_date, end_date):
+    """반과 특강 기간을 함께 저장. 실패하면 반 생성도 취소한다."""
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        if start.isoformat() != start_date or end.isoformat() != end_date:
+            raise ValueError
+    except ValueError:
+        raise ValueError("특강 시작일과 종료일을 YYYY-MM-DD 형식의 올바른 날짜로 입력하세요.") from None
+    if start > end:
+        raise ValueError("특강 종료일은 시작일보다 빠를 수 없습니다.")
+
+    conn = get_conn()
+    try:
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO class (course_id, teacher_id, grade, class_name) VALUES (?, ?, ?, ?)",
+                (course_id, teacher_id, grade, class_name),
+            )
+            conn.execute(
+                "INSERT INTO short_course (class_id, start_date, end_date) VALUES (?, ?, ?)",
+                (cur.lastrowid, start_date, end_date),
+            )
+    finally:
+        conn.close()
+
+
 def list_classes():
     """반 목록 + 과정명/선생님명을 JOIN해서 함께 반환."""
     conn = get_conn()
     rows = conn.execute(
         """SELECT c.class_id, c.class_name, c.grade,
                   co.name AS course_name,
-                  t.name  AS teacher_name
+                  t.name  AS teacher_name,
+                  sc.start_date, sc.end_date
            FROM class c
            LEFT JOIN course  co ON c.course_id  = co.course_id
            LEFT JOIN teacher t  ON c.teacher_id = t.teacher_id
+           LEFT JOIN short_course sc ON c.class_id = sc.class_id
            ORDER BY c.class_id"""
     ).fetchall()
     conn.close()
