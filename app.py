@@ -598,19 +598,25 @@ class PaymentTab(ttk.Frame):
         self.cb_student = ttk.Combobox(form, state="readonly")
         self.cb_student.grid(row=0, column=1, sticky="we", padx=6, pady=4)
 
-        ttk.Label(form, text="과정명").grid(row=1, column=0, sticky="w", padx=6, pady=4)
-        self.e_course = ttk.Entry(form)
-        self.e_course.grid(row=1, column=1, sticky="we", padx=6, pady=4)
+        self.cb_student.bind("<<ComboboxSelected>>", self.on_student_selected)
+        ttk.Label(form, text="반").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.cb_class = ttk.Combobox(form, state="disabled")
+        self.cb_class.grid(row=1, column=1, sticky="we", padx=6, pady=4)
+        self.cb_class.bind("<<ComboboxSelected>>", self.on_class_selected)
 
         ttk.Label(form, text="금액").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-        self.e_fee = ttk.Entry(form)
+        self.fee_var = tk.StringVar(master=self)
+        self.e_fee = ttk.Entry(form, textvariable=self.fee_var, state="readonly")
         self.e_fee.grid(row=2, column=1, sticky="we", padx=6, pady=4)
 
         ttk.Label(form, text="결제일(YYYY-MM-DD)").grid(row=3, column=0, sticky="w", padx=6, pady=4)
         self.e_date = ttk.Entry(form)
         self.e_date.grid(row=3, column=1, sticky="we", padx=6, pady=4)
 
-        ttk.Button(form, text="결제 등록", command=self.on_add).grid(row=4, column=0, columnspan=2, pady=6)
+        self.btn_add = ttk.Button(form, text="결제 등록", command=self.on_add, state="disabled")
+        self.btn_add.grid(row=4, column=0, columnspan=2, pady=6)
+        self.selection_hint = ttk.Label(form, text="학생을 선택하면 수강 중인 반을 확인할 수 있습니다.")
+        self.selection_hint.grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=4)
         form.columnconfigure(1, weight=1)
 
         self.lbl_total = ttk.Label(self, text="총 매출: -")
@@ -629,26 +635,59 @@ class PaymentTab(ttk.Frame):
         self.students = []
         self.refresh()
 
+    def on_student_selected(self, event=None):
+        self.classes = []
+        self.cb_class.configure(values=(), state="disabled")
+        self.cb_class.set("")
+        self.fee_var.set("")
+        self.btn_add.configure(state="disabled")
+        if self.cb_student.current() < 0:
+            self.selection_hint.configure(text="학생을 선택하면 수강 중인 반을 확인할 수 있습니다.")
+            return
+        student_id = self.students[self.cb_student.current()]["student_id"]
+        try:
+            self.classes = list(db.list_active_classes_by_student(student_id))
+        except Exception as ex:
+            self.selection_hint.configure(text="수강 중인 반을 불러오지 못했습니다.")
+            messagebox.showerror("조회 오류", f"수강 중인 반을 불러오지 못했습니다.\n{ex}", parent=self)
+            return
+        if not self.classes:
+            self.selection_hint.configure(text="현재 수강 중인 반이 없습니다.")
+            return
+        self.cb_class.configure(state="readonly", values=[
+            f'{row["class_name"]} · {row["course_name"]} (반 ID: {row["class_id"]})'
+            for row in self.classes
+        ])
+        self.selection_hint.configure(text="반을 선택하면 해당 과정의 금액이 자동으로 입력됩니다.")
+
+    def on_class_selected(self, event=None):
+        index = self.cb_class.current()
+        self.fee_var.set(str(self.classes[index]["fee"]) if index >= 0 else "")
+        self.btn_add.configure(state="normal" if index >= 0 else "disabled")
+
     def on_add(self):
         if self.cb_student.current() < 0:
             messagebox.showwarning("입력 오류", "학생을 선택하세요.")
             return
+        if self.cb_class.current() < 0:
+            messagebox.showwarning("입력 오류", "수강 중인 반을 선택하세요.")
+            return
         try:
             sid = self.students[self.cb_student.current()]["student_id"]
-            fee = int(self.e_fee.get().strip())
-            db.add_payment(sid, self.e_course.get().strip(), fee, self.e_date.get().strip() or "2026-11-14")
+            class_id = self.classes[self.cb_class.current()]["class_id"]
+            db.add_class_payment(sid, class_id, self.e_date.get().strip() or "2026-11-14")
             messagebox.showinfo("완료", "결제가 등록되었습니다.")
-            self.e_course.delete(0, "end")
-            self.e_fee.delete(0, "end")
             self.refresh()
         except ValueError as ve:
             messagebox.showerror("오류", str(ve))
         except Exception as ex:
-            messagebox.showerror("오류", f"금액은 숫자로 입력하세요.\n{ex}")
+            messagebox.showerror("오류", f"결제를 등록하지 못했습니다.\n{ex}")
 
     def refresh(self):
         self.students = list(db.list_students())
         self.cb_student["values"] = [f'{s["name"]} ({s["student_classification"]})' for s in self.students]
+        self.cb_student.set("")
+        self.on_student_selected()
         for i in self.tree.get_children():
             self.tree.delete(i)
         for r in db.list_payments():

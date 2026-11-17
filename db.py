@@ -285,6 +285,52 @@ def list_students_by_class(class_id):
 # ============================================================
 # 결제 (payment)
 # ============================================================
+def list_active_classes_by_student(student_id):
+    """학생이 현재 수강 중인 반과 각 과정의 수강비를 조회한다."""
+    conn = get_conn()
+    try:
+        return conn.execute(
+            """SELECT c.class_id, c.class_name, co.name AS course_name, co.fee
+               FROM enrollment e
+               JOIN class c ON c.class_id = e.class_id
+               JOIN course co ON co.course_id = c.course_id
+               WHERE e.student_id = ? AND e.status = 'ACTIVE'
+               ORDER BY c.class_id""", (student_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def add_class_payment(student_id, class_id, payment_date):
+    """수강 상태를 재확인하고 DB의 과정명·수강비로 결제 내역을 저장한다."""
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            student = conn.execute(
+                "SELECT student_classification FROM student WHERE student_id = ?", (student_id,),
+            ).fetchone()
+            if student is None:
+                raise ValueError("존재하지 않는 학생입니다.")
+            if student["student_classification"] == "BLACK":
+                raise ValueError("블랙리스트 학생은 결제가 불가합니다.")
+            course = conn.execute(
+                """SELECT co.name, co.fee FROM enrollment e
+                   JOIN class c ON c.class_id = e.class_id
+                   JOIN course co ON co.course_id = c.course_id
+                   WHERE e.student_id = ? AND e.class_id = ? AND e.status = 'ACTIVE'""",
+                (student_id, class_id),
+            ).fetchone()
+            if course is None:
+                raise ValueError("현재 수강 중인 반만 결제할 수 있습니다. 학생과 반을 다시 선택하세요.")
+            conn.execute(
+                "INSERT INTO payment (student_id, course_name, course_fee, payment_date) VALUES (?, ?, ?, ?)",
+                (student_id, course["name"], course["fee"], payment_date),
+            )
+    finally:
+        conn.close()
+
+
 def add_payment(student_id, course_name, course_fee, payment_date):
     """결제 입력. 블랙리스트 학생은 결제 차단."""
     conn = get_conn()
