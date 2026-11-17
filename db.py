@@ -46,6 +46,46 @@ def init_db(with_seed=True):
                 conn.executescript(f.read())
     conn.commit()
     conn.close()
+    migrate_nonnegative_fees()
+
+
+def migrate_nonnegative_fees():
+    """기존 양수 금액 제약을 0원 허용 제약으로 변경하고 ID·참조·인덱스를 보존한다."""
+    conn = get_conn()
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for table, column in (("course", "fee"), ("payment", "course_fee")):
+                sql = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,),
+                ).fetchone()[0]
+                pattern = rf"\b{column}\s*>\s*0\b"
+                if not re.search(pattern, sql, re.IGNORECASE):
+                    continue
+                updated = re.sub(pattern, f"typeof({column}) = 'integer' AND {column} >= 0", sql,
+                                 flags=re.IGNORECASE)
+                temporary = f"{table}_fee_migration"
+                updated = re.sub(rf'CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`\[]?{table}["`\]]?',
+                                 f"CREATE TABLE {temporary}", updated, count=1, flags=re.IGNORECASE)
+                objects = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE tbl_name = ? "
+                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL", (table,),
+                ).fetchall()
+                sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone()
+                conn.execute(updated)
+                conn.execute(f"INSERT INTO {temporary} SELECT * FROM {table}")
+                conn.execute(f"DROP TABLE {table}")
+                conn.execute(f"ALTER TABLE {temporary} RENAME TO {table}")
+                if sequence is not None:
+                    conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?",
+                                 (sequence[0], table))
+                for obj in objects:
+                    conn.execute(obj["sql"])
+            if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ValueError("DB 연결 관계 검증에 실패하여 금액 제약 변경을 취소했습니다.")
+    finally:
+        conn.close()
 
 
 # ============================================================
@@ -103,10 +143,45 @@ def list_teachers():
 # 수강과정 (course)
 # ============================================================
 def add_course(name, fee):
+    name, fee = validate_course(name, fee)
     conn = get_conn()
-    conn.execute("INSERT INTO course (name, fee) VALUES (?, ?)", (name, fee))
-    conn.commit()
-    conn.close()
+    try:
+        with conn:
+            conn.execute("INSERT INTO course (name, fee) VALUES (?, ?)", (name, fee))
+    finally:
+        conn.close()
+
+
+def validate_course(name, fee):
+    name = name.strip()
+    if not name:
+        raise ValueError("과정명은 필수입니다.")
+    if isinstance(fee, str):
+        fee = fee.strip()
+        if not re.fullmatch(r"[0-9]+", fee):
+            raise ValueError("수강비는 0 이상의 정수로 입력하세요.")
+        try:
+            fee = int(fee)
+        except ValueError:
+            raise ValueError("수강비가 저장 가능한 정수 범위를 초과했습니다.") from None
+    if type(fee) is not int or fee < 0:
+        raise ValueError("수강비는 0 이상의 정수로 입력하세요.")
+    if fee > 9223372036854775807:
+        raise ValueError("수강비가 저장 가능한 정수 범위를 초과했습니다.")
+    return name, fee
+
+
+def update_course(course_id, name, fee):
+    name, fee = validate_course(name, fee)
+    conn = get_conn()
+    try:
+        with conn:
+            result = conn.execute("UPDATE course SET name = ?, fee = ? WHERE course_id = ?",
+                                  (name, fee, course_id))
+            if result.rowcount != 1:
+                raise ValueError("존재하지 않는 과정입니다. 목록을 새로고침하세요.")
+    finally:
+        conn.close()
 
 
 def list_courses():

@@ -227,9 +227,13 @@ class CourseTab(ttk.Frame):
         )
         form.columnconfigure(1, weight=1)
 
+        actions = ttk.Frame(self)
+        actions.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+        ttk.Button(actions, text="수정", command=self.on_edit).pack(side="left")
         listing = ttk.LabelFrame(self, text="등록된 수강 과정")
         listing.pack(fill="both", expand=True, padx=8, pady=8)
-        self.tree = ttk.Treeview(listing, columns=("id", "name", "fee"), show="headings", height=12)
+        self.tree = ttk.Treeview(listing, columns=("id", "name", "fee"), show="headings", height=12,
+                                 selectmode="browse")
         for c, title, width in [
             ("id", "ID", 60), ("name", "과정명", 300), ("fee", "수강비(원)", 150),
         ]:
@@ -247,15 +251,10 @@ class CourseTab(ttk.Frame):
             messagebox.showwarning("입력 오류", "과정명은 필수입니다.")
             return
         try:
-            fee = int(self.e_fee.get().strip())
-        except ValueError:
-            messagebox.showwarning("입력 오류", "수강비는 1원 이상의 정수로 입력하세요.")
+            db.add_course(name, self.e_fee.get())
+        except ValueError as ex:
+            messagebox.showwarning("입력 오류", str(ex), parent=self)
             return
-        if fee <= 0:
-            messagebox.showwarning("입력 오류", "수강비는 1원 이상의 정수로 입력하세요.")
-            return
-        try:
-            db.add_course(name, fee)
         except Exception as ex:
             messagebox.showerror("오류", f"과정 등록에 실패했습니다.\n{ex}")
             return
@@ -263,6 +262,51 @@ class CourseTab(ttk.Frame):
         self.e_name.delete(0, "end")
         self.e_fee.delete(0, "end")
         self.refresh()
+
+    def on_edit(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("과정 선택", "수정할 과정을 선택하세요.", parent=self)
+            return
+        item = selection[0]
+        course_id = int(self.tree.set(item, "id"))
+        window = tk.Toplevel(self)
+        window.title("수강 과정 수정")
+        window.resizable(False, False)
+        window.transient(self.winfo_toplevel())
+        form = ttk.Frame(window, padding=16)
+        form.pack(fill="both", expand=True)
+        ttk.Label(form, text="과정명").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        name_entry = ttk.Entry(form, width=35)
+        name_entry.grid(row=0, column=1, padx=6, pady=6)
+        name_entry.insert(0, self.tree.set(item, "name"))
+        ttk.Label(form, text="수강비(원)").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        fee_entry = ttk.Entry(form, width=35)
+        fee_entry.grid(row=1, column=1, padx=6, pady=6)
+        fee_entry.insert(0, self.tree.set(item, "fee").replace(",", ""))
+        ttk.Label(form, text="수강비는 0 이상의 정수로 입력하세요.").grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=6, pady=6,
+        )
+
+        def save():
+            try:
+                db.update_course(course_id, name_entry.get(), fee_entry.get())
+            except ValueError as ex:
+                messagebox.showwarning("입력 오류", str(ex), parent=window)
+                return
+            except Exception as ex:
+                messagebox.showerror("저장 오류", f"과정을 수정하지 못했습니다.\n{ex}", parent=window)
+                return
+            window.destroy()
+            self.refresh()
+            messagebox.showinfo("완료", "수강 과정이 수정되었습니다.", parent=self)
+
+        buttons = ttk.Frame(form)
+        buttons.grid(row=3, column=0, columnspan=2, pady=(12, 0))
+        ttk.Button(buttons, text="저장", command=save).pack(side="left", padx=4)
+        ttk.Button(buttons, text="취소", command=window.destroy).pack(side="left", padx=4)
+        window.grab_set()
+        name_entry.focus_set()
 
     def refresh(self):
         for i in self.tree.get_children():
