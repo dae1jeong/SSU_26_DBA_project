@@ -126,10 +126,18 @@ def update_student_classification(student_id, classification):
 # 선생님 (teacher)
 # ============================================================
 def add_teacher(name, contact_number):
+    name = name.strip()
+    if not name:
+        raise ValueError("선생님 이름은 필수입니다.")
     conn = get_conn()
-    conn.execute("INSERT INTO teacher (name, contact_number) VALUES (?, ?)", (name, contact_number))
-    conn.commit()
-    conn.close()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO teacher (name, contact_number) VALUES (?, ?)",
+                (name, (contact_number or "").strip() or None),
+            )
+    finally:
+        conn.close()
 
 
 def list_teachers():
@@ -137,6 +145,23 @@ def list_teachers():
     rows = conn.execute("SELECT teacher_id, name, contact_number FROM teacher ORDER BY teacher_id").fetchall()
     conn.close()
     return rows
+
+
+def update_teacher(teacher_id, name, contact_number):
+    name = name.strip()
+    if not name:
+        raise ValueError("선생님 이름은 필수입니다.")
+    conn = get_conn()
+    try:
+        with conn:
+            result = conn.execute(
+                "UPDATE teacher SET name = ?, contact_number = ? WHERE teacher_id = ?",
+                (name, contact_number.strip() or None, teacher_id),
+            )
+            if result.rowcount != 1:
+                raise ValueError("존재하지 않는 선생님입니다.")
+    finally:
+        conn.close()
 
 
 # ============================================================
@@ -231,11 +256,43 @@ def add_short_course(course_id, teacher_id, grade, class_name, start_date, end_d
         conn.close()
 
 
+def update_class(class_id, class_name, grade, teacher_id):
+    """과정과 특강 기간은 유지하고 반 이름·학년·담당 선생님만 변경한다."""
+    class_name = class_name.strip()
+    if not class_name:
+        raise ValueError("반 이름은 필수입니다.")
+    if isinstance(grade, str):
+        grade = grade.strip()
+        if grade:
+            if not re.fullmatch(r"[0-9]+", grade) or len(grade) > 18:
+                raise ValueError("학년은 양의 정수로 입력하거나 비워 두세요.")
+            grade = int(grade)
+        else:
+            grade = None
+    if grade is not None and (type(grade) is not int or not 0 < grade <= 9223372036854775807):
+        raise ValueError("학년은 양의 정수로 입력하거나 비워 두세요.")
+    conn = get_conn()
+    try:
+        with conn:
+            if teacher_id is not None and conn.execute(
+                "SELECT 1 FROM teacher WHERE teacher_id = ?", (teacher_id,),
+            ).fetchone() is None:
+                raise ValueError("존재하지 않는 선생님입니다. 다시 선택하세요.")
+            result = conn.execute(
+                "UPDATE class SET class_name = ?, grade = ?, teacher_id = ? WHERE class_id = ?",
+                (class_name, grade, teacher_id, class_id),
+            )
+            if result.rowcount != 1:
+                raise ValueError("존재하지 않는 반입니다.")
+    finally:
+        conn.close()
+
+
 def list_classes():
     """반 목록 + 과정명/선생님명을 JOIN해서 함께 반환."""
     conn = get_conn()
     rows = conn.execute(
-        """SELECT c.class_id, c.class_name, c.grade,
+        """SELECT c.class_id, c.class_name, c.grade, c.course_id, c.teacher_id,
                   co.name AS course_name,
                   t.name  AS teacher_name,
                   sc.start_date, sc.end_date

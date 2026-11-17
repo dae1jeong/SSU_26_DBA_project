@@ -5,7 +5,7 @@ app.py - Tkinter GUI (프론트엔드)
 
 실행: python app.py
 - 실행 시 academy.db가 없으면 자동 생성(스키마 + 샘플데이터).
-- 탭: 학생 관리 / 수강 과정 관리 / 반 관리 / 수강 등록 / 결제
+- 탭: 학생 관리 / 선생님 관리 / 수강 과정 관리 / 반 관리 / 수강 등록 / 결제
 - 모든 DB 작업은 db.py 함수를 통해서만 수행 (화면/DB 분리)
 
 [팀원 보완 포인트]
@@ -74,12 +74,14 @@ class AcademyApp(tk.Tk):
         nb.pack(fill="both", expand=True, padx=8, pady=8)
 
         self.tab_student = StudentTab(nb)
+        self.tab_teacher = TeacherTab(nb)
         self.tab_course = CourseTab(nb)
         self.tab_class = ClassTab(nb)
         self.tab_enroll = EnrollTab(nb)
         self.tab_payment = PaymentTab(nb)
 
         nb.add(self.tab_student, text="학생 관리")
+        nb.add(self.tab_teacher, text="선생님 관리")
         nb.add(self.tab_course, text="수강 과정 관리")
         nb.add(self.tab_class, text="반 관리")
         nb.add(self.tab_enroll, text="수강 등록")
@@ -203,6 +205,113 @@ class StudentTab(ttk.Frame):
                 r["student_id"], r["name"], r["school"], r["grade"],
                 r["day_of_admission"], r["contact_number"], r["student_classification"],
             ))
+
+
+# ------------------------------------------------------------
+# 선생님 관리 탭
+# ------------------------------------------------------------
+class TeacherTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master)
+        form = ttk.LabelFrame(self, text="선생님 등록")
+        form.pack(fill="x", padx=8, pady=8)
+        ttk.Label(form, text="이름").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        self.e_name = ttk.Entry(form)
+        self.e_name.grid(row=0, column=1, sticky="we", padx=6, pady=4)
+        ttk.Label(form, text="연락처").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        self.e_contact = ttk.Entry(form)
+        self.e_contact.grid(row=1, column=1, sticky="we", padx=6, pady=4)
+        ttk.Button(form, text="등록", command=self.on_add).grid(row=2, column=0, columnspan=2, pady=6)
+        form.columnconfigure(1, weight=1)
+        window = self
+        ttk.Label(self, text="목록에서 선생님을 선택한 뒤 아래 버튼으로 정보를 수정하세요.").pack(anchor="w", padx=8, pady=(8, 0))
+        buttons = ttk.Frame(window)
+        buttons.pack(side="bottom", fill="x", padx=12, pady=12)
+        frame = ttk.Frame(window)
+        frame.pack(fill="both", expand=True, padx=12, pady=12)
+        tree = ttk.Treeview(frame, columns=("id", "name", "contact"), show="headings", selectmode="browse")
+        for column, title, width in (("id", "ID", 60), ("name", "이름", 160), ("contact", "연락처", 240)):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="center")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        tree.pack(fill="both", expand=True)
+
+        def reload_teachers():
+            try:
+                teachers = db.list_teachers()
+            except Exception as ex:
+                messagebox.showerror("조회 오류", f"선생님 목록을 불러오지 못했습니다.\n{ex}", parent=window)
+                return
+            for item in tree.get_children():
+                tree.delete(item)
+            for teacher in teachers:
+                tree.insert("", "end", values=(teacher["teacher_id"], teacher["name"], teacher["contact_number"] or ""))
+
+        def edit_teacher():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showwarning("선생님 선택", "수정할 선생님을 선택하세요.", parent=window)
+                return
+            item = selection[0]
+            teacher_id = int(tree.set(item, "id"))
+            editor = tk.Toplevel(window)
+            editor.title("선생님 정보 수정")
+            editor.transient(self.winfo_toplevel())
+            editor.resizable(False, False)
+            form = ttk.Frame(editor, padding=16)
+            form.pack(fill="both", expand=True)
+            ttk.Label(form, text="이름").grid(row=0, column=0, padx=6, pady=6)
+            name = ttk.Entry(form, width=30)
+            name.grid(row=0, column=1, padx=6, pady=6)
+            name.insert(0, tree.set(item, "name"))
+            ttk.Label(form, text="연락처").grid(row=1, column=0, padx=6, pady=6)
+            contact = ttk.Entry(form, width=30)
+            contact.grid(row=1, column=1, padx=6, pady=6)
+            contact.insert(0, tree.set(item, "contact"))
+
+            def close_editor():
+                editor.destroy()
+
+            def save():
+                try:
+                    db.update_teacher(teacher_id, name.get(), contact.get())
+                except ValueError as ex:
+                    messagebox.showwarning("입력 오류", str(ex), parent=editor)
+                    return
+                except Exception as ex:
+                    messagebox.showerror("저장 오류", f"선생님 정보를 저장하지 못했습니다.\n{ex}", parent=editor)
+                    return
+                close_editor()
+                reload_teachers()
+                messagebox.showinfo("완료", "선생님 정보가 수정되었습니다.", parent=window)
+
+            controls = ttk.Frame(form)
+            controls.grid(row=2, column=0, columnspan=2, pady=10)
+            ttk.Button(controls, text="저장", command=save).pack(side="left", padx=4)
+            ttk.Button(controls, text="취소", command=close_editor).pack(side="left", padx=4)
+            editor.protocol("WM_DELETE_WINDOW", close_editor)
+            editor.grab_set()
+            name.focus_set()
+
+        ttk.Button(buttons, text="선생님 정보 수정", command=edit_teacher).pack(side="left")
+        self.refresh = reload_teachers
+        self.refresh()
+
+    def on_add(self):
+        try:
+            db.add_teacher(self.e_name.get(), self.e_contact.get())
+        except ValueError as ex:
+            messagebox.showwarning("입력 오류", str(ex), parent=self)
+            return
+        except Exception as ex:
+            messagebox.showerror("등록 오류", f"선생님을 등록하지 못했습니다.\n{ex}", parent=self)
+            return
+        self.e_name.delete(0, "end")
+        self.e_contact.delete(0, "end")
+        self.refresh()
+        messagebox.showinfo("완료", "선생님이 등록되었습니다.", parent=self)
 
 
 # ------------------------------------------------------------
@@ -366,6 +475,7 @@ class ClassTab(ttk.Frame):
         actions.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
         ttk.Button(actions, text="학생 명단 확인", command=self.show_class_students).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="시간표 조회/수정", command=self.show_class_timetable).pack(side="left")
+        ttk.Button(actions, text="반 정보 수정", command=self.edit_class).pack(side="left", padx=8)
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12, selectmode="browse")
         for c, t, w in [
             ("id", "ID", 40), ("name", "반 이름", 120), ("grade", "학년", 50),
@@ -379,6 +489,63 @@ class ClassTab(ttk.Frame):
         self.courses = []
         self.teachers = []
         self.refresh()
+
+    def edit_class(self):
+        item = self.selected_class_item()
+        if not item:
+            return
+        class_id = int(self.tree.set(item, "id"))
+        try:
+            record = next((row for row in db.list_classes() if row["class_id"] == class_id), None)
+            teachers = list(db.list_teachers())
+            if record is None:
+                raise ValueError("존재하지 않는 반입니다.")
+        except Exception as ex:
+            messagebox.showerror("조회 오류", str(ex), parent=self)
+            return
+        window = tk.Toplevel(self)
+        window.title("반 정보 수정")
+        window.transient(self.winfo_toplevel())
+        window.resizable(False, False)
+        form = ttk.Frame(window, padding=16)
+        form.pack(fill="both", expand=True)
+        for row, text in enumerate(("과정 (변경 불가)", "반 이름", "학년", "선생님")):
+            ttk.Label(form, text=text).grid(row=row, column=0, sticky="w", padx=6, pady=6)
+        window.course_var = tk.StringVar(master=window, value=record["course_name"])
+        ttk.Entry(form, textvariable=window.course_var, state="readonly", width=35).grid(row=0, column=1, padx=6, pady=6)
+        name = ttk.Entry(form, width=35)
+        name.grid(row=1, column=1, padx=6, pady=6)
+        name.insert(0, record["class_name"])
+        grade = ttk.Entry(form, width=35)
+        grade.grid(row=2, column=1, padx=6, pady=6)
+        if record["grade"] is not None:
+            grade.insert(0, str(record["grade"]))
+        teacher = ttk.Combobox(form, state="readonly", width=33,
+                               values=["NULL (미지정)"] + [f'{t["name"]} (ID: {t["teacher_id"]})' for t in teachers])
+        teacher.grid(row=3, column=1, padx=6, pady=6)
+        teacher.current(next((i + 1 for i, t in enumerate(teachers)
+                              if t["teacher_id"] == record["teacher_id"]), 0))
+
+        def save():
+            teacher_id = teachers[teacher.current() - 1]["teacher_id"] if teacher.current() > 0 else None
+            try:
+                db.update_class(class_id, name.get(), grade.get(), teacher_id)
+            except ValueError as ex:
+                messagebox.showwarning("입력 오류", str(ex), parent=window)
+                return
+            except Exception as ex:
+                messagebox.showerror("저장 오류", f"반 정보를 저장하지 못했습니다.\n{ex}", parent=window)
+                return
+            window.destroy()
+            self.refresh()
+            messagebox.showinfo("완료", "반 정보가 수정되었습니다.", parent=self)
+
+        controls = ttk.Frame(form)
+        controls.grid(row=4, column=0, columnspan=2, pady=10)
+        ttk.Button(controls, text="저장", command=save).pack(side="left", padx=4)
+        ttk.Button(controls, text="취소", command=window.destroy).pack(side="left", padx=4)
+        window.grab_set()
+        name.focus_set()
 
     def selected_class_item(self):
         selection = self.tree.selection()
@@ -530,8 +697,8 @@ class ClassTab(ttk.Frame):
         try:
             course_id = self.courses[self.cb_course.current()]["course_id"]
             teacher_id = None
-            if self.cb_teacher.current() >= 0:
-                teacher_id = self.teachers[self.cb_teacher.current()]["teacher_id"]
+            if self.cb_teacher.current() > 0:
+                teacher_id = self.teachers[self.cb_teacher.current() - 1]["teacher_id"]
             grade = self.e_grade.get().strip()
             grade = int(grade) if grade else None
             if self.is_short_course:
@@ -551,15 +718,22 @@ class ClassTab(ttk.Frame):
             messagebox.showerror("오류", str(ex))
 
     def refresh(self):
+        previous_teacher = None
+        teacher_index = self.cb_teacher.current() - 1
+        if 0 <= teacher_index < len(self.teachers):
+            previous_teacher = self.teachers[teacher_index]["teacher_id"]
         self.courses = list(db.list_courses())
         self.teachers = list(db.list_teachers())
         self.cb_course["values"] = [f'{c["name"]} ({c["fee"]}원)' for c in self.courses]
-        self.cb_teacher["values"] = [t["name"] for t in self.teachers]
+        self.cb_teacher["values"] = ["NULL (미지정)"] + [f'{t["name"]} (ID: {t["teacher_id"]})' for t in self.teachers]
+        self.cb_teacher.current(next((i + 1 for i, t in enumerate(self.teachers)
+                                      if t["teacher_id"] == previous_teacher), 0))
         for i in self.tree.get_children():
             self.tree.delete(i)
         for r in db.list_classes():
             self.tree.insert("", "end", values=(
-                r["class_id"], r["class_name"], r["grade"], r["course_name"], r["teacher_name"],
+                r["class_id"], r["class_name"], r["grade"] if r["grade"] is not None else "",
+                r["course_name"], r["teacher_name"] or "NULL (미지정)",
                 r["start_date"] or "", r["end_date"] or "",
             ))
 
