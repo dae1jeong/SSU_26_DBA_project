@@ -42,6 +42,25 @@ def setup_style(root):
     style.configure("Treeview", background="#ffffff", foreground="#000000",
                     fieldbackground="#ffffff", rowheight=24)
     style.configure("Treeview.Heading", background="#d9d9d9", foreground="#000000")
+    # 테마의 X 표시 대신 직접 그린 체크 표시를 사용한다 (키보드 조작은 ttk 유지).
+    unchecked = tk.PhotoImage(master=root, width=20, height=20)
+    checked = tk.PhotoImage(master=root, width=20, height=20)
+    for icon in (unchecked, checked):
+        icon.put("#777777", to=(1, 1, 19, 19))
+        icon.put("#ffffff", to=(2, 2, 18, 18))
+    for x, y in ((4, 9), (5, 10), (6, 11), (7, 12), (8, 11),
+                 (9, 10), (10, 9), (11, 8), (12, 7), (13, 6), (14, 5)):
+        checked.put("#16723b", to=(x, y, x + 2, y + 2))
+    root.timetable_check_images = (unchecked, checked)
+    style.element_create("Timetable.indicator", "image", unchecked, ("selected", checked))
+    style.layout("Timetable.TCheckbutton", [
+        ("Checkbutton.padding", {"sticky": "nswe", "children": [
+            ("Checkbutton.focus", {"sticky": "nswe", "children": [
+                ("Timetable.indicator", {"side": "left", "sticky": ""}),
+                ("Checkbutton.label", {"side": "left", "sticky": "nswe"}),
+            ]}),
+        ]}),
+    ])
 
 
 class AcademyApp(tk.Tk):
@@ -298,8 +317,12 @@ class ClassTab(ttk.Frame):
         form.columnconfigure(1, weight=1)
 
         cols = ("id", "name", "grade", "course", "teacher", "start_date", "end_date")
-        ttk.Label(self, text="반을 더블클릭하면 해당 반의 학생 명단을 볼 수 있습니다.").pack(anchor="w", padx=8)
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12)
+        ttk.Label(self, text="반을 선택한 뒤 아래 버튼으로 학생 명단이나 시간표를 확인하세요.").pack(anchor="w", padx=8)
+        actions = ttk.Frame(self)
+        actions.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+        ttk.Button(actions, text="학생 명단 확인", command=self.show_class_students).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="시간표 조회/수정", command=self.show_class_timetable).pack(side="left")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12, selectmode="browse")
         for c, t, w in [
             ("id", "ID", 40), ("name", "반 이름", 120), ("grade", "학년", 50),
             ("course", "과정", 160), ("teacher", "선생님", 100),
@@ -311,13 +334,17 @@ class ClassTab(ttk.Frame):
 
         self.courses = []
         self.teachers = []
-        self.tree.bind("<Double-1>", self.show_class_students)
         self.refresh()
 
-    def show_class_students(self, event):
-        if self.tree.identify_region(event.x, event.y) != "cell":
-            return
-        item = self.tree.identify_row(event.y)
+    def selected_class_item(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("반 선택", "반을 선택하세요.", parent=self)
+            return None
+        return selection[0]
+
+    def show_class_students(self):
+        item = self.selected_class_item()
         if not item:
             return
         class_id = int(self.tree.set(item, "id"))
@@ -355,6 +382,91 @@ class ClassTab(ttk.Frame):
         if not students:
             ttk.Label(window, text="등록된 학생이 없습니다.").pack(pady=6)
         ttk.Button(window, text="닫기", command=window.destroy).pack(pady=8)
+
+    def show_class_timetable(self):
+        item = self.selected_class_item()
+        if not item:
+            return
+        class_id = int(self.tree.set(item, "id"))
+        class_name = self.tree.set(item, "name")
+        try:
+            timetable = db.list_timetable_by_class(class_id)
+        except Exception as ex:
+            messagebox.showerror("오류", f"시간표를 불러오지 못했습니다.\n{ex}", parent=self)
+            return
+
+        window = tk.Toplevel(self)
+        window.title(f"{class_name} - 시간표 조회/수정")
+        window.geometry("620x520")
+        window.minsize(560, 500)
+        window.transient(self.winfo_toplevel())
+        ttk.Label(window, text=f"{class_name} · 주간 시간표", font=("맑은 고딕", 13, "bold")).pack(
+            anchor="w", padx=16, pady=(16, 6),
+        )
+        teacher = self.tree.set(item, "teacher")
+        if teacher in ("", "None"):
+            teacher = "미지정"
+        ttk.Label(window, text=f"과정: {self.tree.set(item, 'course')}    담당 선생님: {teacher}").pack(
+            anchor="w", padx=16, pady=(0, 12),
+        )
+
+        form = ttk.LabelFrame(window, text="요일별 수업 시간")
+        form.pack(fill="both", expand=True, padx=16, pady=4)
+        for column, title in enumerate(("요일", "수업 있음", "시작 시간", "종료 시간")):
+            ttk.Label(form, text=title).grid(row=0, column=column, padx=12, pady=10)
+        form.columnconfigure(2, weight=1)
+        form.columnconfigure(3, weight=1)
+        by_day = {row["day_of_class"]: row for row in timetable}
+        # 팝업이 열려 있는 동안 체크박스 변수를 유지한다.
+        window.day_variables = []
+        day_inputs = {}
+        days = zip(("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"),
+                   ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"))
+        for index, (day, label) in enumerate(days, start=1):
+            existing = by_day.get(day)
+            enabled = tk.BooleanVar(master=window, value=existing is not None)
+            window.day_variables.append(enabled)
+            ttk.Label(form, text=label).grid(row=index, column=0, padx=12, pady=7)
+            start = ttk.Entry(form, width=12)
+            end = ttk.Entry(form, width=12)
+            start.grid(row=index, column=2, sticky="ew", padx=12, pady=7)
+            end.grid(row=index, column=3, sticky="ew", padx=12, pady=7)
+            if existing is not None:
+                start.insert(0, existing["start_time"])
+                end.insert(0, existing["end_time"])
+
+            def toggle_inputs(variable=enabled, entries=(start, end)):
+                for entry in entries:
+                    entry.configure(state="normal" if variable.get() else "disabled")
+
+            ttk.Checkbutton(form, variable=enabled, command=toggle_inputs,
+                            style="Timetable.TCheckbutton").grid(row=index, column=1)
+            day_inputs[day] = (enabled, start, end)
+            toggle_inputs()
+
+        ttk.Label(window, text="시간 입력 형식: HH:MM (예: 18:30)").pack(anchor="w", padx=16, pady=(8, 4))
+        ttk.Label(window, text="체크한 요일만 저장됩니다. 체크를 해제하고 저장하면 해당 수업이 삭제됩니다.",
+                  wraplength=500).pack(anchor="w", padx=16)
+
+        def save_timetable():
+            schedule = {
+                day: (start.get().strip(), end.get().strip())
+                for day, (enabled, start, end) in day_inputs.items() if enabled.get()
+            }
+            try:
+                db.save_timetable_by_class(class_id, schedule)
+            except ValueError as ex:
+                messagebox.showwarning("입력 오류", str(ex), parent=window)
+                return
+            except Exception as ex:
+                messagebox.showerror("저장 오류", f"시간표를 저장하지 못했습니다. 다시 시도해 주세요.\n{ex}", parent=window)
+                return
+            messagebox.showinfo("완료", "시간표가 저장되었습니다.", parent=window)
+
+        buttons = ttk.Frame(window)
+        buttons.pack(fill="x", padx=16, pady=12)
+        ttk.Button(buttons, text="닫기", command=window.destroy).pack(side="right")
+        ttk.Button(buttons, text="저장", command=save_timetable).pack(side="right", padx=8)
 
     def toggle_short_course(self):
         self.is_short_course = not self.is_short_course

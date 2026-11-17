@@ -13,6 +13,7 @@ db.py - 데이터베이스 접근 계층 (백엔드)
 """
 
 import os
+import re
 import sqlite3
 from datetime import date
 
@@ -171,6 +172,61 @@ def list_classes():
     ).fetchall()
     conn.close()
     return rows
+
+
+# ============================================================
+# 시간표 (timetable)
+# ============================================================
+def save_timetable_by_class(class_id, schedule):
+    """{요일 코드: (시작, 종료)} 전체를 검증한 뒤 반의 시간표를 원자적으로 저장한다."""
+    labels = dict(zip(
+        ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"),
+        ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"),
+    ))
+    rows = []
+    for day, times in schedule.items():
+        if day not in labels:
+            raise ValueError("올바른 수업 요일을 선택하세요.")
+        label = labels[day]
+        if not isinstance(times, (tuple, list)) or len(times) != 2:
+            raise ValueError(f"{label}: 시작 시간과 종료 시간을 입력하세요.")
+        start, end = times
+        for field, value in (("시작", start), ("종료", end)):
+            if not isinstance(value, str) or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value):
+                raise ValueError(f"{label}: {field} 시간을 HH:MM 형식(00:00~23:59)으로 입력하세요.")
+        if start >= end:
+            raise ValueError(f"{label}: 종료 시간은 시작 시간보다 늦어야 합니다. 자정을 넘기는 수업은 등록할 수 없습니다.")
+        rows.append((day, class_id, start, end))
+
+    conn = get_conn()
+    try:
+        with conn:
+            if conn.execute("SELECT 1 FROM class WHERE class_id = ?", (class_id,)).fetchone() is None:
+                raise ValueError("존재하지 않는 반입니다.")
+            conn.execute("DELETE FROM timetable WHERE class_id = ?", (class_id,))
+            conn.executemany(
+                "INSERT INTO timetable (day_of_class, class_id, start_time, end_time) VALUES (?, ?, ?, ?)",
+                rows,
+            )
+    finally:
+        conn.close()
+
+
+def list_timetable_by_class(class_id):
+    """반의 주간 시간표를 월요일부터 일요일 순서로 조회한다."""
+    conn = get_conn()
+    try:
+        return conn.execute(
+            """SELECT day_of_class, start_time, end_time
+               FROM timetable WHERE class_id = ?
+               ORDER BY CASE day_of_class
+                   WHEN 'MON' THEN 1 WHEN 'TUE' THEN 2 WHEN 'WED' THEN 3
+                   WHEN 'THU' THEN 4 WHEN 'FRI' THEN 5 WHEN 'SAT' THEN 6
+                   WHEN 'SUN' THEN 7 END""",
+            (class_id,),
+        ).fetchall()
+    finally:
+        conn.close()
 
 
 # ============================================================
