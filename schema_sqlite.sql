@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS teacher (
 CREATE TABLE IF NOT EXISTS course (
     course_id   INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
-    fee         INTEGER NOT NULL CHECK (fee > 0)
+    fee         INTEGER NOT NULL CHECK (typeof(fee) = 'integer' AND fee >= 0)
 );
 
 -- 3. 반 (정규)
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS payment (
     payment_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id    INTEGER NOT NULL,
     course_name   TEXT    NOT NULL,
-    course_fee    INTEGER NOT NULL CHECK (course_fee > 0),
+    course_fee    INTEGER NOT NULL CHECK (typeof(course_fee) = 'integer' AND course_fee >= 0),
     payment_date  TEXT    NOT NULL,
     FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
@@ -93,3 +93,5 @@ CREATE INDEX IF NOT EXISTS idx_payment_date           ON payment(payment_date);
 CREATE INDEX IF NOT EXISTS idx_student_classification ON student(student_classification);
 CREATE INDEX IF NOT EXISTS idx_enrollment_class       ON enrollment(class_id);
 CREATE INDEX IF NOT EXISTS idx_enrollment_student     ON enrollment(student_id);
+
+CREATE INDEX IF NOT EXISTS idx_payment_student_date ON payment(student_id, payment_date);
