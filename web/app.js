@@ -30,9 +30,75 @@ function dashboard(pay){const active=state.students.filter(s=>s.student_classifi
 $('#content').innerHTML=`<div class="stats">${tiles.map(t=>`<div class="stat"><div class="stat-top">${t[0]}<span class="stat-symbol">${t[4]}</span></div><strong>${t[1]}<small>${t[2]}</small></strong><p>${t[3]}</p></div>`).join('')}</div><div class="grid-two">${card('최근 등록 학생','최근 등록된 학생 5명을 확인하세요.',table(['ID','학생명','학교','상태'],state.students.slice(-5).reverse().map(s=>tr([s.student_id,esc(s.name),esc(s.school)||'—',badge(s.student_classification,true)]))))}${card('최근 결제 내역','결제일 기준 최근 수납 내역입니다.',table(['학생명','수강 과정','금액','결제일'],pay.rows.filter(r=>r.status==='PAID').slice(0,5).map(r=>tr([esc(r.student_name),esc(r.course_name),money(r.course_fee),esc(r.payment_date)]))))}</div><p class="section-label">자주 사용하는 업무</p><div class="quick-links"><a href="#students">학생 정보 관리 <span>↗</span></a><a href="#classes">반 · 시간표 관리 <span>↗</span></a><a href="#enrollments">수강 등록 및 상태 변경 <span>↗</span></a><a href="#payments">결제 등록 · 수납 조회 <span>↗</span></a></div>`;
 }
 const opts=(rows,idKey,nameKey,selected='',blank='선택하세요')=>`<option value="">${blank}</option>`+rows.map(r=>`<option value="${r[idKey]}" ${String(r[idKey])===String(selected)?'selected':''}>${esc(r[nameKey])} (ID: ${r[idKey]})</option>`).join('');
-async function payments(token){$('#content').innerHTML=card('결제 내역','학생과 조회 기간을 선택해 수납 현황을 확인하세요.',`<form id="payment-filter" class="toolbar"><select name="student_id" aria-label="결제 조회 학생">${opts(state.students,'student_id','name','','전체 학생')}</select><label>시작일 <input name="start_date" type="date" aria-label="조회 시작일"></label><label>종료일 <input name="end_date" type="date" aria-label="조회 종료일"></label><button class="primary">조회</button><button type="reset">전체 보기</button></form><div id="payment-result"></div>`);const form=$('#payment-filter');form.addEventListener('submit',e=>{e.preventDefault();loadPayments()});form.addEventListener('reset',()=>setTimeout(()=>loadPayments(),0));await loadPayments(token)}
+async function payments(token){
+    const month = today().slice(0,7);
+    const targets = card('결제 대상','청구월에 해당하는 현재 수강 건입니다.',
+        `<form id="target-filter" class="toolbar">
+            <label>대상 청구월 <input type="month" name="billing_month" value="${month}" required></label>
+            <button class="primary">대상 조회</button>
+        </form><div id="target-results"></div>`);
+    const history = card('결제 내역','청구월과 실제 결제일을 각각 기준으로 조회할 수 있습니다.',
+        `<form id="payment-filter" class="toolbar">
+            <select name="student_id" aria-label="결제 조회 학생">${opts(state.students,'student_id','name','','전체 학생')}</select>
+            <label>내역 청구월 <input name="billing_month" type="month"></label>
+            <label>결제 시작일 <input name="start_date" type="date"></label>
+            <label>결제 종료일 <input name="end_date" type="date"></label>
+            <button class="primary">내역 조회</button><button type="reset">전체 보기</button>
+        </form><div id="payment-result"></div>`);
+    $('#content').innerHTML='<div class="payment-panels">'+targets+history+'</div>';
+    $('#target-filter').addEventListener('submit',event=>{event.preventDefault();loadPaymentTargets()});
+    $('#target-filter').billing_month.addEventListener('change',()=>loadPaymentTargets());
+    const form=$('#payment-filter');
+    form.addEventListener('submit',event=>{event.preventDefault();loadPayments()});
+    form.addEventListener('reset',()=>setTimeout(()=>{if(form.isConnected) loadPayments()},0));
+    await Promise.all([loadPaymentTargets(token),loadPayments(token)]);
+}
+let targetRequest=0;
+async function loadPaymentTargets(token=generation){
+    const request=++targetRequest;
+    const target=$('#target-results');
+    const month=$('#target-filter').billing_month.value;
+    target.textContent='결제 대상을 불러오는 중입니다…';
+    try{
+        const rows=await api('/api/payment-targets?'+new URLSearchParams({billing_month:month}));
+        if(token!==generation||request!==targetRequest)return;
+        target.innerHTML=table(['학생','반','과정','수강비','상태','관리'],rows.map(row=>tr([
+            esc(row.student_name)+' (ID: '+row.student_id+')', esc(row.class_name), esc(row.course_name),
+            money(row.billed_fee??row.fee), row.status?badge(row.status):'미발행',
+            row.payment_id?'—':button('미납 등록','payment.issue',row.enrollment_id),
+        ])),'해당 월의 결제 대상이 없습니다.');
+        target.onclick=event=>{
+            const issue=event.target.closest('[data-action="payment.issue"]');
+            if(!issue)return;
+            const row=rows.find(row=>row.enrollment_id===Number(issue.dataset.id));
+            formDialog('미납 청구 등록',
+                `<p class="note field full">${esc(row.student_name)} · ${esc(row.class_name)} · ${esc(month)} · ${money(row.fee)}</p>`,
+                'payment.add',{student_id:row.student_id,class_id:row.class_id,billing_month:month,status:'UNPAID'},
+                '',refreshPaymentPanels);
+        };
+    }catch(e){
+        if(token===generation&&request===targetRequest)target.innerHTML=`<div class="error" role="alert">${esc(e.message)}</div>`;
+    }
+}
 let paymentRequest=0;
-async function loadPayments(token=generation){const request=++paymentRequest;try{const q=new URLSearchParams(new FormData($('#payment-filter')));const data=await api('/api/payments?'+q);if(token!==generation||request!==paymentRequest)return;$('#payment-result').innerHTML=table(['ID','학생명','결제 과정','금액','결제일','상태','관리'],data.rows.map(r=>tr([r.payment_id,esc(r.student_name),esc(r.course_name),money(r.course_fee),esc(r.payment_date)||'—',badge(r.status),paymentAction(r)])))+`<div class="summary-strip"><span>조회 결과 ${data.rows.length}건 · 시작일과 종료일 포함</span><strong>수납 합계 ${money(data.total)}</strong></div>`}catch(e){if(token===generation&&request===paymentRequest)$('#payment-result').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div>`}}
+async function loadPayments(token=generation){
+    const request=++paymentRequest;
+    try{
+        const q=new URLSearchParams(new FormData($('#payment-filter')));
+        const data=await api('/api/payments?'+q);
+        if(token!==generation||request!==paymentRequest)return;
+        $('#payment-result').innerHTML=table(['ID','학생명','반','결제 과정','청구월','금액','결제일','상태','관리'],
+            data.rows.map(r=>tr([r.payment_id,esc(r.student_name),esc(r.class_name)||'—',esc(r.course_name),
+                esc(r.billing_month?.slice(0,7))||'미지정',money(r.course_fee),esc(r.payment_date)||'—',
+                badge(r.status),paymentAction(r)])))+
+            `<div class="summary-strip"><span>조회 결과 ${data.rows.length}건 · 결제일 경계 포함</span><strong>수납 합계 ${money(data.total)}</strong></div>`;
+    }catch(e){
+        if(token===generation&&request===paymentRequest)$('#payment-result').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div>`;
+    }
+}
+async function refreshPaymentPanels(){
+    if(page==='payments'&&$('#target-filter'))await Promise.all([loadPaymentTargets(),loadPayments()]);
+}
 function paymentAction(row){
     if(row.status==='UNPAID') return button('완납 처리','payment.paid',row.payment_id);
     if(row.status==='PAID') return button('환불 처리','payment.refund',row.payment_id);
@@ -43,7 +109,7 @@ $('#close-dialog').onclick=()=>$('#dialog').close();$('#dialog').addEventListene
 const field=(label,name,value='',type='text',required=false,extra='')=>`<div class="field"><label for="f-${name}">${label}${required?' *':''}</label><input id="f-${name}" name="${name}" type="${type}" value="${esc(value)}" ${required?'required':''} ${extra}></div>`;
 const selectField=(label,name,options)=>`<div class="field"><label for="f-${name}">${label}</label><select id="f-${name}" name="${name}">${options}</select></div>`;
 const statusOptions=(values,current)=>values.map(s=>`<option value="${s}" ${s===current?'selected':''}>${s==='ACTIVE'?'활성 / 수강 중':labels[s]}</option>`).join('');
-function formDialog(title,fields,action,extra={},note=''){openDialog(title,`<p class="required">* 필수 입력 항목</p><form id="editor"><div class="form-grid">${fields}</div>${note?`<p class="note">${note}</p>`:''}<div id="form-error" role="alert"></div><div class="form-actions"><button type="button" id="cancel">취소</button><button class="primary" id="save">저장</button></div></form>`);$('#cancel').onclick=()=>$('#dialog').close();$('#editor').addEventListener('submit',async e=>{e.preventDefault();const data={...Object.fromEntries(new FormData(e.target)),...extra};const save=$('#save');save.disabled=true;try{await api('/api/'+action,data);$('#dialog').close();toast('저장되었습니다.');await render()}catch(err){$('#form-error').innerHTML=`<div class="error">${esc(err.message)}</div>`}finally{save.disabled=false}})}
+function formDialog(title,fields,action,extra={},note='',onSaved=render){openDialog(title,`<p class="required">* 필수 입력 항목</p><form id="editor"><div class="form-grid">${fields}</div>${note?`<p class="note">${note}</p>`:''}<div id="form-error" role="alert"></div><div class="form-actions"><button type="button" id="cancel">취소</button><button class="primary" id="save">저장</button></div></form>`);$('#cancel').onclick=()=>$('#dialog').close();$('#editor').addEventListener('submit',async e=>{e.preventDefault();const data={...Object.fromEntries(new FormData(e.target)),...extra};const save=$('#save');save.disabled=true;try{await api('/api/'+action,data);$('#dialog').close();toast('저장되었습니다.');await onSaved()}catch(err){$('#form-error').innerHTML=`<div class="error">${esc(err.message)}</div>`}finally{save.disabled=false}})}
 function gradeField(current){
     const options='<option value="">미지정</option>'+state.grade_levels.map(grade=>
         `<option value="${esc(grade)}" ${grade===current?'selected':''}>${esc(grade)}</option>`).join('');
@@ -55,12 +121,55 @@ function courseEditor(r={}){formDialog(r.course_id?'수강 과정 수정':'새 �
 function classEditor(r={}){const edit=!!r.class_id;formDialog(edit?'반 정보 수정':'새 반 개설',field('반 이름','class_name',r.class_name,'text',true)+gradeField(r.grade)+selectField('수강 과정 *','course_id',opts(state.courses,'course_id','name',r.course_id))+selectField('담당 선생님','teacher_id',opts(state.teachers,'teacher_id','name',r.teacher_id,'미지정 (공석)'))+(edit?'':selectField('반 유형','kind','<option value="regular">정규반</option><option value="short">특강</option>')+`<div class="field full" id="period" hidden><div class="form-grid">${field('특강 시작일','start_date','','date')+field('특강 종료일','end_date','','date')}</div></div>`),'class.save',edit?{class_id:r.class_id}:{},edit?'수강 과정과 특강 기간은 유지됩니다. 선생님을 미지정으로 바꾸면 공석 처리됩니다.':'시간표는 반 개설 후 목록의 시간표 버튼에서 등록하세요.');$('#f-course_id').required=true;if(edit)$('#f-course_id').disabled=true;else $('#f-kind').onchange=()=>{const short=$('#f-kind').value==='short';$('#period').hidden=!short;$('#f-start_date').required=short;$('#f-end_date').required=short}}
 function enrollmentEditor(){formDialog('새 수강 등록',selectField('학생 *','student_id',opts(state.students.filter(r=>r.student_classification!=='BLACK'),'student_id','name'))+selectField('반 *','class_id',opts(state.classes,'class_id','class_name'))+field('수강 등록일','enrolled_date',today(),'date'),'enrollment.add',{},'같은 학생은 같은 반에 중복 등록할 수 없습니다. 재수강은 기존 수강의 상태를 변경하세요.');$('#f-student_id').required=true;$('#f-class_id').required=true}
 function enrollmentStatus(r){formDialog('수강 상태 변경',`<div class="field full"><p class="note">${esc(r.student_name)} · ${esc(r.class_name)}</p></div>`+selectField('수강 상태','status',statusOptions(['ACTIVE','COMPLETED','CANCELED'],r.status)),'enrollment.status',{enrollment_id:r.enrollment_id},'수료·취소 시 결제 등록 대상에서 제외됩니다. 기존 결제 내역과 최초 수강 등록일은 유지됩니다.')}
-function paymentEditor(){formDialog('수강료 결제 등록',selectField('학생 *','student_id',opts(state.students.filter(s=>s.student_classification!=='BLACK'),'student_id','name'))+selectField('현재 수강 중인 반 *','class_id','<option value="">학생을 먼저 선택하세요</option>')+field('결제 금액 (원)','amount','','text',false,'readonly')+selectField('결제 상태','status',statusOptions(['PAID','UNPAID'],'PAID'))+field('결제일','payment_date',today(),'date'),'payment.add',{},'선택한 반의 현재 수강비가 자동 적용됩니다. 저장한 결제는 이후 가격 변경과 관계없이 유지됩니다.');$('#f-student_id').required=true;$('#f-class_id').required=true;$('#f-class_id').disabled=true;$('#save').disabled=true;let active=[],request=0;$('#f-student_id').onchange=async()=>{const id=$('#f-student_id').value,version=++request;$('#f-class_id').disabled=true;$('#f-class_id').innerHTML='<option value="">수강 중인 반 없음</option>';$('#f-amount').value='';$('#save').disabled=true;if(!id)return;try{const d=await api('/api/student?id='+id);if(version!==request)return;active=d.active_classes;$('#f-class_id').innerHTML=opts(active,'class_id','class_name','','반을 선택하세요');$('#f-class_id').disabled=!active.length}catch(e){$('#form-error').innerHTML=`<div class="error">${esc(e.message)}</div>`}};$('#f-class_id').onchange=()=>{const r=active.find(c=>String(c.class_id)===$('#f-class_id').value);$('#f-amount').value=r?money(r.fee):'';$('#save').disabled=!r};$('#f-status').onchange=()=>{$('#f-payment_date').disabled=$('#f-status').value==='UNPAID'}}
+function paymentEditor(){
+    const month=$('#target-filter')?.billing_month.value||today().slice(0,7);
+    const fields=selectField('학생 *','student_id',opts(state.students.filter(s=>s.student_classification!=='BLACK'),'student_id','name'))
+        +field('청구월','billing_month',month,'month',true)
+        +selectField('결제 대상 반 *','class_id','<option value="">학생을 먼저 선택하세요</option>')
+        +field('결제 금액 (원)','amount','','text',false,'readonly')
+        +selectField('결제 상태','status',statusOptions(['PAID','UNPAID'],'PAID'))
+        +field('결제일','payment_date',today(),'date');
+    formDialog('수강료 결제 등록',fields,'payment.add',{},
+        '청구월을 기준으로 미발행 수강을 선택합니다. 선택한 반의 현재 수강비를 저장합니다.',refreshPaymentPanels);
+    const student=$('#f-student_id'), billingMonth=$('#f-billing_month'), target=$('#f-class_id');
+    const amount=$('#f-amount'), save=$('#save'), error=$('#form-error');
+    student.required=true;
+    target.required=true;
+    target.disabled=true;
+    save.disabled=true;
+    let active=[],request=0;
+    async function loadClasses(){
+        const version=++request;
+        error.textContent='';
+        target.disabled=true;
+        target.innerHTML='<option value="">해당 월의 미발행 수강 없음</option>';
+        amount.value='';
+        save.disabled=true;
+        if(!student.value||!billingMonth.value)return;
+        try{
+            const query=new URLSearchParams({student_id:student.value,billing_month:billingMonth.value});
+            const rows=await api('/api/payment-targets?'+query);
+            if(version!==request||!target.isConnected)return;
+            active=rows.filter(row=>!row.payment_id);
+            target.innerHTML=opts(active,'class_id','class_name','','반을 선택하세요');
+            target.disabled=!active.length;
+        }catch(e){
+            if(version===request&&target.isConnected)error.textContent=e.message;
+        }
+    }
+    student.onchange=billingMonth.onchange=loadClasses;
+    target.onchange=()=>{
+        const row=active.find(row=>String(row.class_id)===target.value);
+        amount.value=row?money(row.fee):'';
+        save.disabled=!row;
+    };
+    $('#f-status').onchange=()=>{$('#f-payment_date').disabled=$('#f-status').value==='UNPAID'};
+}
 function paymentStatusEditor(id,status){
     const paid=status==='PAID';
     const fields=paid?field('실제 결제일','payment_date',today(),'date',true):
         '<p class="note field full">선택한 결제를 전액 환불 상태로 기록합니다. 최초 결제일과 금액은 보존됩니다.</p>';
-    formDialog(paid?'완납 처리':'환불 처리',fields,'payment.status',{payment_id:id,status});
+    formDialog(paid?'완납 처리':'환불 처리',fields,'payment.status',{payment_id:id,status},'',refreshPaymentPanels);
 }
 async function studentHistory(id){const r=state.students.find(s=>s.student_id===id),d=await api('/api/student?id='+id);const total=d.enrollments.filter(e=>e.status==='ACTIVE').reduce((n,e)=>n+e.fee,0);openDialog(`${r.name} · 수강 내역`, `<div class="note">학생 ID ${id} · 모든 수강 상태를 표시합니다.<br>현재 수강비 합계 <b>${money(total)}</b> · 수강 중인 반의 현재 가격 기준이며 납부액이 아닙니다.</div>`+table(['반 이름','과정','현재 수강비','등록일','상태'],d.enrollments.map(e=>tr([esc(e.class_name),esc(e.course_name),money(e.fee),esc(e.enrolled_date),badge(e.status)]))))}
 async function classRoster(id){const r=state.classes.find(c=>c.class_id===id),d=await api('/api/class?id='+id);openDialog(`${r.class_name} · 학생 명단`,`<p class="note">총 ${d.students.length}명 · 수료·취소 상태를 포함합니다.</p>`+table(['학생 ID','이름','학교','수강 상태'],d.students.map(s=>tr([s.student_id,esc(s.name),esc(s.school)||'—',badge(s.status)]))))}

@@ -82,13 +82,23 @@ CREATE TABLE IF NOT EXISTS short_course (
 CREATE TABLE IF NOT EXISTS payment (
     payment_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id    INTEGER NOT NULL,
+    enrollment_id INTEGER,
+    billing_month TEXT,
     course_name   TEXT    NOT NULL,
     course_fee    INTEGER NOT NULL CHECK (typeof(course_fee) = 'integer' AND course_fee >= 0),
     payment_date  TEXT,
     status        TEXT    NOT NULL DEFAULT 'UNPAID'
                   CHECK (status IN ('PAID','UNPAID','REFUNDED')),
     CHECK ((status = 'UNPAID') = (payment_date IS NULL)),
-    FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE
+    CHECK ((enrollment_id IS NULL) = (billing_month IS NULL)),
+    CHECK (billing_month IS NULL OR (
+        billing_month GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-01'
+        AND substr(billing_month, 1, 4) <> '0000'
+        AND substr(billing_month, 6, 2) BETWEEN '01' AND '12'
+    )),
+    UNIQUE (enrollment_id, billing_month),
+    FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    FOREIGN KEY (enrollment_id) REFERENCES enrollment(enrollment_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
 -- 조회 성능 인덱스
@@ -97,3 +107,4 @@ CREATE INDEX IF NOT EXISTS idx_student_classification ON student(student_classif
 CREATE INDEX IF NOT EXISTS idx_enrollment_class       ON enrollment(class_id);
 CREATE INDEX IF NOT EXISTS idx_enrollment_student     ON enrollment(student_id);
 CREATE INDEX IF NOT EXISTS idx_payment_student_date ON payment(student_id, payment_date);
+CREATE INDEX IF NOT EXISTS idx_payment_billing_month ON payment(billing_month);

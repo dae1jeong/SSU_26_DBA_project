@@ -56,7 +56,7 @@ def dispatch(action, data):
         db.update_enrollment_status(int(data['enrollment_id']), data.get('status'))
     elif action == 'payment.add':
         db.add_class_payment(int(data['student_id']), int(data['class_id']), data.get('payment_date', ''),
-                             data.get('status', 'PAID'))
+                             data.get('status', 'PAID'), data.get('billing_month'))
     elif action == 'payment.status':
         db.update_payment_status(int(data['payment_id']), data.get('status'), data.get('payment_date'))
     elif action == 'timetable.save':
@@ -88,8 +88,11 @@ class Handler(BaseHTTPRequestHandler):
                     ('students', db.list_students), ('teachers', db.list_teachers),
                     ('courses', db.list_courses), ('classes', db.list_classes),
                     ('enrollments', db.list_enrollments))} | {'grade_levels': db.GRADE_LEVELS})
+            if url.path == '/api/payment-targets':
+                return self.send(200, records(db.list_payment_targets(q.get('billing_month'), q.get('student_id'))))
             if url.path == '/api/payments':
-                rows = records(db.list_payments(q.get('student_id'), q.get('start_date'), q.get('end_date')))
+                rows = records(db.list_payments(q.get('student_id'), q.get('start_date'), q.get('end_date'),
+                                                q.get('billing_month')))
                 return self.send(200, {'rows': rows, 'total': sum(r['course_fee'] for r in rows if r['status'] == 'PAID')})
             if url.path == '/api/student':
                 sid = int(q['id'])

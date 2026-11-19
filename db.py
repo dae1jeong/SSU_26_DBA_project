@@ -15,6 +15,7 @@ db.py - 데이터베이스 접근 계층 (백엔드)
 import os
 import re
 import sqlite3
+from calendar import monthrange
 from datetime import date
 
 GRADE_LEVELS = tuple(f"{level}{grade}" for level, count in (("초", 6), ("중", 3), ("고", 3))
@@ -39,20 +40,23 @@ def get_conn():
 def init_db(with_seed=True):
     """academy.db가 없으면 스키마(+샘플데이터)로 새로 생성."""
     need_seed = with_seed and not os.path.exists(DB_PATH)
-    conn = get_conn()
     with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
-        schema = f.read()
+        schema, indexes = f.read().split("-- 조회 성능 인덱스", 1)
+    conn = get_conn()
+    try:
         conn.executescript(schema)
-    # 테이블이 비어있고 seed 요청이면 샘플 삽입
-    if need_seed and os.path.exists(SEED_PATH):
-        cur = conn.execute("SELECT COUNT(*) FROM student;")
-        if cur.fetchone()[0] == 0:
+        if need_seed and os.path.exists(SEED_PATH) and not conn.execute("SELECT 1 FROM student LIMIT 1").fetchone():
             with open(SEED_PATH, "r", encoding="utf-8") as f:
                 conn.executescript(f.read())
-    conn.commit()
-    conn.close()
+    finally:
+        conn.close()
     migrate_nonnegative_fees()
     migrate_academy_fields(schema)
+    conn = get_conn()
+    try:
+        conn.executescript(indexes)
+    finally:
+        conn.close()
     sync_expired_short_courses()
 
 
@@ -113,8 +117,8 @@ def migrate_academy_fields(schema):
             conn.execute("BEGIN IMMEDIATE")
             for table, hint in (("student", "school"), ("class", "class_name"), ("payment", None)):
                 fields = {row["name"]: row["type"] for row in conn.execute(f"PRAGMA table_info({table})")}
-                key = "grade" if hint else "status"
-                if fields.get(key) == "TEXT":
+                done = fields.get("grade") == "TEXT" if hint else "billing_month" in fields
+                if done:
                     continue
                 ddl = re.search(rf'^CREATE TABLE IF NOT EXISTS {table} \(.*?^\);',
                                 schema, flags=re.M | re.S)[0]
@@ -130,7 +134,7 @@ def migrate_academy_fields(schema):
                                 original_grade TEXT NOT NULL, PRIMARY KEY (source_table, record_id)
                             )""")
                             conn.execute("INSERT INTO legacy_grade VALUES (?, ?, ?)", (table, row[0], row["grade"]))
-                else:
+                elif "status" not in fields:
                     # 이전 결제에는 실제 결제일이 있었으므로 납부 완료로 이관한다.
                     conn.execute("ALTER TABLE payment ADD COLUMN status TEXT NOT NULL DEFAULT 'PAID'")
                     fields["status"] = "TEXT"
@@ -536,37 +540,73 @@ def list_active_classes_by_student(student_id):
         conn.close()
 
 
-def add_class_payment(student_id, class_id, payment_date, status="PAID"):
-    """수강 상태를 재확인하고 DB의 과정명·수강비로 결제 내역을 저장한다."""
+def normalize_billing_month(value):
+    """YYYY-MM 또는 DB 저장 형식 YYYY-MM-01을 월 초 날짜로 변환한다."""
+    if isinstance(value, str):
+        value = value.strip()
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}(?:-01)?", value):
+            try:
+                return date.fromisoformat(value[:7] + "-01")
+            except ValueError:
+                pass
+    raise ValueError("청구월은 실제 연·월을 YYYY-MM 형식으로 입력하세요.")
+
+
+def payment_targets_query(month):
+    last_day = month.replace(day=monthrange(month.year, month.month)[1])
+    return """SELECT e.enrollment_id, e.student_id, e.class_id, s.name AS student_name,
+                c.class_name, co.name AS course_name, co.fee,
+                p.payment_id, p.status, p.course_fee AS billed_fee
+           FROM enrollment e
+           JOIN student s ON s.student_id = e.student_id
+           JOIN class c ON c.class_id = e.class_id
+           JOIN course co ON co.course_id = c.course_id
+           LEFT JOIN short_course sc ON sc.class_id = c.class_id
+           LEFT JOIN payment p ON p.enrollment_id = e.enrollment_id AND p.billing_month = ?
+           WHERE e.status = 'ACTIVE' AND s.student_classification <> 'BLACK'
+             AND e.enrolled_date <= ?
+             AND (sc.class_id IS NULL OR (sc.start_date <= ? AND sc.end_date >= ?))""", (
+        month.isoformat(), last_day.isoformat(), last_day.isoformat(), max(month, date.today()).isoformat(),
+    )
+
+
+def list_payment_targets(billing_month, student_id=None):
+    month = normalize_billing_month(billing_month)
+    sync_expired_short_courses()
+    conn = get_conn()
+    try:
+        query, params = payment_targets_query(month)
+        if student_id is not None:
+            query += " AND e.student_id = ?"
+            params = (*params, student_id)
+        return conn.execute(query + " ORDER BY s.name, e.student_id, c.class_name, e.class_id", params).fetchall()
+    finally:
+        conn.close()
+
+
+def add_class_payment(student_id, class_id, payment_date, status="PAID", billing_month=None):
+    """선택 월의 수강 자격을 확인하고 월별 청구와 당시 수강비를 저장한다."""
     if status not in ("PAID", "UNPAID"):
         raise ValueError("신규 결제 상태는 완납 또는 미납을 선택하세요.")
+    month = normalize_billing_month(date.today().isoformat()[:7] if billing_month is None else billing_month)
     payment_date = validate_date(payment_date) if status == "PAID" else None
     sync_expired_short_courses()
     conn = get_conn()
     try:
         with conn:
             conn.execute("BEGIN IMMEDIATE")
-            student = conn.execute(
-                "SELECT student_classification FROM student WHERE student_id = ?", (student_id,),
-            ).fetchone()
-            if student is None:
-                raise ValueError("존재하지 않는 학생입니다.")
-            if student["student_classification"] == "BLACK":
-                raise ValueError("블랙리스트 학생은 결제가 불가합니다.")
-            course = conn.execute(
-                """SELECT co.name, co.fee FROM enrollment e
-                   JOIN class c ON c.class_id = e.class_id
-                   JOIN course co ON co.course_id = c.course_id
-                   WHERE e.student_id = ? AND e.class_id = ? AND e.status = 'ACTIVE'
-                     AND NOT EXISTS (SELECT 1 FROM short_course sc
-                         WHERE sc.class_id = c.class_id AND sc.end_date < ?)""",
-                (student_id, class_id, date.today().isoformat()),
-            ).fetchone()
-            if course is None:
-                raise ValueError("현재 수강 중인 반만 결제할 수 있습니다. 학생과 반을 다시 선택하세요.")
-            conn.execute(
-                "INSERT INTO payment (student_id, course_name, course_fee, payment_date, status) VALUES (?, ?, ?, ?, ?)",
-                (student_id, course["name"], course["fee"], payment_date, status),
+            query, params = payment_targets_query(month)
+            target = conn.execute(query + " AND e.student_id = ? AND e.class_id = ?",
+                                  (*params, student_id, class_id)).fetchone()
+            if target is None:
+                raise ValueError("선택한 월의 결제 대상이 아닙니다. 학생·반과 수강 기간을 확인하세요.")
+            if target["payment_id"] is not None:
+                raise ValueError("이 수강의 청구가 해당 월에 이미 등록되어 있습니다.")
+            conn.execute("""INSERT INTO payment
+                (student_id, enrollment_id, billing_month, course_name, course_fee, payment_date, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (student_id, target["enrollment_id"], month.isoformat(), target["course_name"],
+                 target["fee"], payment_date, status),
             )
     finally:
         conn.close()
@@ -617,7 +657,7 @@ def update_payment_status(payment_id, status, payment_date=None):
         conn.close()
 
 
-def payment_filters(student_id=None, start_date=None, end_date=None):
+def payment_filters(student_id=None, start_date=None, end_date=None, billing_month=None):
     clauses, values = [], []
     for value, column, operator in ((student_id, 'p.student_id', '='),
                                      (start_date, 'p.payment_date', '>='),
@@ -627,27 +667,32 @@ def payment_filters(student_id=None, start_date=None, end_date=None):
                 value = validate_date(value)
             clauses.append(f"{column} {operator} ?")
             values.append(value)
+    if billing_month:
+        clauses.append('p.billing_month = ?')
+        values.append(normalize_billing_month(billing_month).isoformat())
     if start_date and end_date and start_date > end_date:
         raise ValueError("종료일은 시작일보다 빠를 수 없습니다.")
     return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), values
 
 
-def list_payments(student_id=None, start_date=None, end_date=None):
-    where, values = payment_filters(student_id, start_date, end_date)
+def list_payments(student_id=None, start_date=None, end_date=None, billing_month=None):
+    where, values = payment_filters(student_id, start_date, end_date, billing_month)
     conn = get_conn()
     rows = conn.execute(
         """SELECT p.payment_id, s.name AS student_name, p.course_name,
-                  p.course_fee, p.payment_date, p.status
+                  p.course_fee, p.payment_date, p.status, p.billing_month, c.class_name
            FROM payment p
            JOIN student s ON p.student_id = s.student_id
+           LEFT JOIN enrollment e ON e.enrollment_id = p.enrollment_id
+           LEFT JOIN class c ON c.class_id = e.class_id
            """ + where + " ORDER BY p.payment_date DESC, p.payment_id DESC", values
     ).fetchall()
     conn.close()
     return rows
 
 
-def total_revenue(student_id=None, start_date=None, end_date=None):
-    where, values = payment_filters(student_id, start_date, end_date)
+def total_revenue(student_id=None, start_date=None, end_date=None, billing_month=None):
+    where, values = payment_filters(student_id, start_date, end_date, billing_month)
     paid_clause = " AND p.status = 'PAID'" if where else " WHERE p.status = 'PAID'"
     conn = get_conn()
     try:
