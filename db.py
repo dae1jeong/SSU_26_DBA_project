@@ -17,6 +17,10 @@ import re
 import sqlite3
 from datetime import date
 
+GRADE_LEVELS = tuple(f"{level}{grade}" for level, count in (("초", 6), ("중", 3), ("고", 3))
+                     for grade in range(1, count + 1))
+PAYMENT_TRANSITIONS = {"UNPAID": "PAID", "PAID": "REFUNDED"}
+
 # 이 파일이 있는 폴더 기준으로 academy.db 경로 지정 (어느 위치에서 실행해도 동일)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "academy.db")
@@ -37,7 +41,8 @@ def init_db(with_seed=True):
     need_seed = with_seed and not os.path.exists(DB_PATH)
     conn = get_conn()
     with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
-        conn.executescript(f.read())
+        schema = f.read()
+        conn.executescript(schema)
     # 테이블이 비어있고 seed 요청이면 샘플 삽입
     if need_seed and os.path.exists(SEED_PATH):
         cur = conn.execute("SELECT COUNT(*) FROM student;")
@@ -47,6 +52,8 @@ def init_db(with_seed=True):
     conn.commit()
     conn.close()
     migrate_nonnegative_fees()
+    migrate_academy_fields(schema)
+    sync_expired_short_courses()
 
 
 def migrate_nonnegative_fees():
@@ -65,27 +72,105 @@ def migrate_nonnegative_fees():
                     continue
                 updated = re.sub(pattern, f"typeof({column}) = 'integer' AND {column} >= 0", sql,
                                  flags=re.IGNORECASE)
-                temporary = f"{table}_fee_migration"
-                updated = re.sub(rf'CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`\[]?{table}["`\]]?',
-                                 f"CREATE TABLE {temporary}", updated, count=1, flags=re.IGNORECASE)
-                objects = conn.execute(
-                    "SELECT sql FROM sqlite_master WHERE tbl_name = ? "
-                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL", (table,),
-                ).fetchall()
-                sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone()
-                conn.execute(updated)
-                conn.execute(f"INSERT INTO {temporary} SELECT * FROM {table}")
-                conn.execute(f"DROP TABLE {table}")
-                conn.execute(f"ALTER TABLE {temporary} RENAME TO {table}")
-                if sequence is not None:
-                    conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?",
-                                 (sequence[0], table))
-                for obj in objects:
-                    conn.execute(obj["sql"])
+                columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+                replace_table(conn, table, updated, {}, columns)
             if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise ValueError("DB 연결 관계 검증에 실패하여 금액 제약 변경을 취소했습니다.")
     finally:
         conn.close()
+
+
+def replace_table(conn, table, ddl, replacements, columns):
+    """트랜잭션 안에서 테이블을 재구성하고 명시 인덱스·트리거·ID 시퀀스를 복원한다."""
+    temporary = f"{table}_migration"
+    ddl = re.sub(r'CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`\[]?' + table + r'["`\]]?',
+                 f"CREATE TABLE {temporary}", ddl, count=1, flags=re.IGNORECASE)
+    objects = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE tbl_name = ? "
+        "AND type IN ('index', 'trigger') AND sql IS NOT NULL", (table,),
+    ).fetchall()
+    sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone()
+    names = ", ".join(f'"{name}"' for name in columns)
+    placeholders = ", ".join("?" for name in columns)
+    rows = [tuple(replacements.get((row[0], name), row[name]) for name in columns)
+            for row in conn.execute(f"SELECT {names} FROM {table}")]
+    conn.execute(ddl)
+    conn.executemany(f"INSERT INTO {temporary} ({names}) VALUES ({placeholders})", rows)
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {temporary} RENAME TO {table}")
+    if sequence is not None:
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table,))
+        conn.execute("INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)", (table, sequence[0]))
+    for obj in objects:
+        conn.execute(obj["sql"])
+
+
+def migrate_academy_fields(schema):
+    conn = get_conn()
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for table, hint in (("student", "school"), ("class", "class_name"), ("payment", None)):
+                fields = {row["name"]: row["type"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                key = "grade" if hint else "status"
+                if fields.get(key) == "TEXT":
+                    continue
+                ddl = re.search(rf'^CREATE TABLE IF NOT EXISTS {table} \(.*?^\);',
+                                schema, flags=re.M | re.S)[0]
+                replacements = {}
+                if hint:
+                    id_column = f"{table}_id"
+                    for row in conn.execute(f"SELECT {id_column}, grade, {hint} FROM {table} WHERE grade IS NOT NULL"):
+                        grade = legacy_grade(row["grade"], row[hint], table)
+                        replacements[row[0], "grade"] = grade
+                        if grade is None:
+                            conn.execute("""CREATE TABLE IF NOT EXISTS legacy_grade (
+                                source_table TEXT NOT NULL, record_id INTEGER NOT NULL,
+                                original_grade TEXT NOT NULL, PRIMARY KEY (source_table, record_id)
+                            )""")
+                            conn.execute("INSERT INTO legacy_grade VALUES (?, ?, ?)", (table, row[0], row["grade"]))
+                else:
+                    # 이전 결제에는 실제 결제일이 있었으므로 납부 완료로 이관한다.
+                    conn.execute("ALTER TABLE payment ADD COLUMN status TEXT NOT NULL DEFAULT 'PAID'")
+                    fields["status"] = "TEXT"
+                replace_table(conn, table, ddl, replacements, fields)
+            if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ValueError("외래키 검증에 실패하여 DB 변경을 취소했습니다.")
+    finally:
+        conn.close()
+
+
+def legacy_grade(grade, hint, table):
+    grade = str(grade)
+    if grade in GRADE_LEVELS:
+        return grade
+    hint = (hint or "").strip()
+    if table == "student":
+        match = re.search(r"(초|중|고)(?:등학교|학교)?$", hint)
+    else:
+        match = re.search(rf"(초|중|고){re.escape(grade)}(?![0-9])", hint)
+    level_grade = match[1] + grade if match else None
+    return level_grade if level_grade in GRADE_LEVELS else None
+
+
+def sync_expired_short_courses():
+    """종료일 다음 날부터 진행 중인 특강 수강을 수료 처리한다."""
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("""UPDATE enrollment SET status = 'COMPLETED'
+                WHERE status = 'ACTIVE' AND class_id IN (
+                    SELECT class_id FROM short_course WHERE end_date < ?
+                )""", (date.today().isoformat(),))
+    finally:
+        conn.close()
+
+
+def prevent_expired_enrollment(conn, class_id):
+    if conn.execute("SELECT 1 FROM short_course WHERE class_id = ? AND end_date < ?",
+                    (class_id, date.today().isoformat())).fetchone():
+        raise ValueError("종료된 특강은 수강을 등록하거나 활성화할 수 없습니다.")
 
 
 # ============================================================
@@ -140,7 +225,7 @@ def add_teacher(name, contact_number):
         with conn:
             conn.execute(
                 "INSERT INTO teacher (name, contact_number) VALUES (?, ?)",
-                (name, (contact_number or "").strip() or None),
+                (name, normalize_contact(contact_number)),
             )
     finally:
         conn.close()
@@ -162,7 +247,7 @@ def update_teacher(teacher_id, name, contact_number):
         with conn:
             result = conn.execute(
                 "UPDATE teacher SET name = ?, contact_number = ? WHERE teacher_id = ?",
-                (name, contact_number.strip() or None, teacher_id),
+                (name, normalize_contact(contact_number), teacher_id),
             )
             if result.rowcount != 1:
                 raise ValueError("존재하지 않는 선생님입니다.")
@@ -388,6 +473,9 @@ def add_enrollment(student_id, class_id, enrolled_date, status="ACTIVE"):
         raise ValueError("블랙리스트 학생은 수강 등록이 불가합니다.")
     try:
         with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if status == "ACTIVE":
+                prevent_expired_enrollment(conn, class_id)
             if conn.execute("SELECT 1 FROM enrollment WHERE student_id=? AND class_id=?",
                             (student_id, class_id)).fetchone():
                 raise ValueError("이미 등록된 반입니다. 기존 수강의 상태를 변경하세요.")
@@ -398,6 +486,7 @@ def add_enrollment(student_id, class_id, enrolled_date, status="ACTIVE"):
 
 
 def list_enrollments():
+    sync_expired_short_courses()
     conn = get_conn()
     rows = conn.execute(
         """SELECT e.enrollment_id, s.name AS student_name, c.class_name,
@@ -413,6 +502,7 @@ def list_enrollments():
 
 def list_students_by_class(class_id):
     """특정 반의 학생 명단."""
+    sync_expired_short_courses()
     conn = get_conn()
     rows = conn.execute(
         """SELECT s.student_id, s.name, s.school, e.status
@@ -431,6 +521,7 @@ def list_students_by_class(class_id):
 # ============================================================
 def list_active_classes_by_student(student_id):
     """학생이 현재 수강 중인 반과 각 과정의 수강비를 조회한다."""
+    sync_expired_short_courses()
     conn = get_conn()
     try:
         return conn.execute(
@@ -445,9 +536,12 @@ def list_active_classes_by_student(student_id):
         conn.close()
 
 
-def add_class_payment(student_id, class_id, payment_date):
+def add_class_payment(student_id, class_id, payment_date, status="PAID"):
     """수강 상태를 재확인하고 DB의 과정명·수강비로 결제 내역을 저장한다."""
-    payment_date = validate_date(payment_date)
+    if status not in ("PAID", "UNPAID"):
+        raise ValueError("신규 결제 상태는 완납 또는 미납을 선택하세요.")
+    payment_date = validate_date(payment_date) if status == "PAID" else None
+    sync_expired_short_courses()
     conn = get_conn()
     try:
         with conn:
@@ -463,14 +557,16 @@ def add_class_payment(student_id, class_id, payment_date):
                 """SELECT co.name, co.fee FROM enrollment e
                    JOIN class c ON c.class_id = e.class_id
                    JOIN course co ON co.course_id = c.course_id
-                   WHERE e.student_id = ? AND e.class_id = ? AND e.status = 'ACTIVE'""",
-                (student_id, class_id),
+                   WHERE e.student_id = ? AND e.class_id = ? AND e.status = 'ACTIVE'
+                     AND NOT EXISTS (SELECT 1 FROM short_course sc
+                         WHERE sc.class_id = c.class_id AND sc.end_date < ?)""",
+                (student_id, class_id, date.today().isoformat()),
             ).fetchone()
             if course is None:
                 raise ValueError("현재 수강 중인 반만 결제할 수 있습니다. 학생과 반을 다시 선택하세요.")
             conn.execute(
-                "INSERT INTO payment (student_id, course_name, course_fee, payment_date) VALUES (?, ?, ?, ?)",
-                (student_id, course["name"], course["fee"], payment_date),
+                "INSERT INTO payment (student_id, course_name, course_fee, payment_date, status) VALUES (?, ?, ?, ?, ?)",
+                (student_id, course["name"], course["fee"], payment_date, status),
             )
     finally:
         conn.close()
@@ -493,9 +589,30 @@ def add_payment(student_id, course_name, course_fee, payment_date):
     try:
         with conn:
             conn.execute(
-                "INSERT INTO payment (student_id, course_name, course_fee, payment_date) VALUES (?, ?, ?, ?)",
+                "INSERT INTO payment (student_id, course_name, course_fee, payment_date, status) VALUES (?, ?, ?, ?, 'PAID')",
                 (student_id, course_name, course_fee, payment_date),
             )
+    finally:
+        conn.close()
+
+
+def update_payment_status(payment_id, status, payment_date=None):
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("""SELECT p.status, p.payment_date, s.student_classification
+                FROM payment p JOIN student s ON p.student_id = s.student_id
+                WHERE p.payment_id = ?""", (payment_id,)).fetchone()
+            if row is None:
+                raise ValueError("존재하지 않는 결제 내역입니다.")
+            if not status or PAYMENT_TRANSITIONS.get(row["status"]) != status:
+                raise ValueError("미납은 완납으로, 완납은 환불로 변경할 수 있습니다.")
+            if status == "PAID" and row["student_classification"] == "BLACK":
+                raise ValueError("블랙리스트 학생은 결제가 불가합니다.")
+            paid_on = validate_date(payment_date) if status == "PAID" else row["payment_date"]
+            conn.execute("UPDATE payment SET status = ?, payment_date = ? WHERE payment_id = ?",
+                         (status, paid_on, payment_id))
     finally:
         conn.close()
 
@@ -520,7 +637,7 @@ def list_payments(student_id=None, start_date=None, end_date=None):
     conn = get_conn()
     rows = conn.execute(
         """SELECT p.payment_id, s.name AS student_name, p.course_name,
-                  p.course_fee, p.payment_date
+                  p.course_fee, p.payment_date, p.status
            FROM payment p
            JOIN student s ON p.student_id = s.student_id
            """ + where + " ORDER BY p.payment_date DESC, p.payment_id DESC", values
@@ -531,9 +648,10 @@ def list_payments(student_id=None, start_date=None, end_date=None):
 
 def total_revenue(student_id=None, start_date=None, end_date=None):
     where, values = payment_filters(student_id, start_date, end_date)
+    paid_clause = " AND p.status = 'PAID'" if where else " WHERE p.status = 'PAID'"
     conn = get_conn()
     try:
-        return conn.execute("SELECT COALESCE(SUM(p.course_fee), 0) FROM payment p" + where,
+        return conn.execute("SELECT COALESCE(SUM(p.course_fee), 0) FROM payment p" + where + paid_clause,
                             values).fetchone()[0]
     finally:
         conn.close()
@@ -558,18 +676,30 @@ def validate_student(name, school, grade, admission, contact, classification):
     if classification not in ('ACTIVE', 'INACTIVE', 'BLACK'):
         raise ValueError("올바른 학생 분류를 선택하세요.")
     grade = validate_grade(grade)
-    return name, (school or '').strip() or None, grade, validate_date(admission, True), (contact or '').strip() or None, classification
+    return name, (school or '').strip() or None, grade, validate_date(admission, True), normalize_contact(contact, student=True), classification
+
+
+def normalize_contact(value, student=False):
+    value = (value or "").strip()
+    if not value:
+        return None
+    prefix = r"01[0-9]" if student else r"0[0-9]{1,2}"
+    if re.fullmatch(rf"{prefix}-[0-9]{{3,4}}-[0-9]{{4}}", value):
+        return value
+    prefix = r"02" if not student and value.startswith("02") else r"0[0-9]{2}"
+    if re.fullmatch(rf"{prefix}[0-9]{{7,8}}", value) and (not student or value.startswith("01")):
+        prefix_length = 2 if prefix == "02" else 3
+        return f"{value[:prefix_length]}-{value[prefix_length:-4]}-{value[-4:]}"
+    description = "휴대전화 번호" if student else "국내 전화번호"
+    raise ValueError(f"{description}를 올바르게 입력하세요 (예: 010-1234-5678).")
 
 
 def validate_grade(grade):
-    if grade is None or str(grade).strip() == '':
+    if grade is None or (isinstance(grade, str) and not grade.strip()):
         return None
-    if not re.fullmatch(r'[0-9]+', str(grade).strip()):
-        raise ValueError("학년은 양의 정수로 입력하거나 비워 두세요.")
-    value = int(grade)
-    if not 0 < value <= 127:
-        raise ValueError("학년은 1~127 범위의 정수로 입력하세요.")
-    return value
+    if not isinstance(grade, str) or grade.strip() not in GRADE_LEVELS:
+        raise ValueError("초1~초6, 중1~중3, 고1~고3 중에서 학년을 선택하세요.")
+    return grade.strip()
 
 
 def update_student(student_id, name, school, grade, admission, contact, classification):
@@ -592,19 +722,23 @@ def update_enrollment_status(enrollment_id, status):
     conn = get_conn()
     try:
         with conn:
-            row = conn.execute("""SELECT s.student_classification FROM enrollment e
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("""SELECT s.student_classification, e.class_id FROM enrollment e
                 JOIN student s ON s.student_id=e.student_id WHERE e.enrollment_id=?""",
                 (enrollment_id,)).fetchone()
             if row is None:
                 raise ValueError("존재하지 않는 수강 등록입니다.")
             if status == 'ACTIVE' and row[0] == 'BLACK':
                 raise ValueError("블랙리스트 학생의 수강을 활성화할 수 없습니다.")
+            if status == "ACTIVE":
+                prevent_expired_enrollment(conn, row["class_id"])
             conn.execute("UPDATE enrollment SET status=? WHERE enrollment_id=?", (status, enrollment_id))
     finally:
         conn.close()
 
 
 def list_enrollments_by_student(student_id):
+    sync_expired_short_courses()
     conn = get_conn()
     try:
         return conn.execute("""SELECT e.enrollment_id, c.class_name, co.name AS course_name,

@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS class (
     class_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     course_id   INTEGER NOT NULL,
     teacher_id  INTEGER,
-    grade       INTEGER,
+    grade       TEXT CHECK (grade IN ('초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3')),
     class_name  TEXT    NOT NULL,
     FOREIGN KEY (course_id)  REFERENCES course(course_id)   ON DELETE RESTRICT ON UPDATE CASCADE,
     FOREIGN KEY (teacher_id) REFERENCES teacher(teacher_id) ON DELETE SET NULL ON UPDATE CASCADE
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS student (
     student_id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name                    TEXT    NOT NULL,
     school                  TEXT,
-    grade                   INTEGER,
+    grade                   TEXT CHECK (grade IN ('초1','초2','초3','초4','초5','초6','중1','중2','중3','고1','고2','고3')),
     day_of_admission        TEXT,          -- SQLite는 DATE 타입이 없음 → TEXT 'YYYY-MM-DD'
     contact_number          TEXT,
     student_classification  TEXT    NOT NULL DEFAULT 'ACTIVE'
@@ -84,7 +84,10 @@ CREATE TABLE IF NOT EXISTS payment (
     student_id    INTEGER NOT NULL,
     course_name   TEXT    NOT NULL,
     course_fee    INTEGER NOT NULL CHECK (typeof(course_fee) = 'integer' AND course_fee >= 0),
-    payment_date  TEXT    NOT NULL,
+    payment_date  TEXT,
+    status        TEXT    NOT NULL DEFAULT 'UNPAID'
+                  CHECK (status IN ('PAID','UNPAID','REFUNDED')),
+    CHECK ((status = 'UNPAID') = (payment_date IS NULL)),
     FOREIGN KEY (student_id) REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 

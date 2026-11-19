@@ -24,23 +24,31 @@ class WebWorkflows(unittest.TestCase):
         self.temp.cleanup()
 
     def test_web_full_workflow_and_updates(self):
-        dispatch('student.save', dict(name='웹학생', school='중학교', grade='2', day_of_admission='2026-11-19', contact_number='', student_classification='ACTIVE'))
+        dispatch('student.save', dict(name='웹학생', school='중학교', grade='중2', day_of_admission='2026-11-19', contact_number='01012345678', student_classification='ACTIVE'))
+        self.assertEqual(db.list_students()[-1]['contact_number'], '010-1234-5678')
         sid = db.list_students()[-1]['student_id']
-        dispatch('student.save', dict(student_id=sid, name='수정학생', school='', grade='3', day_of_admission='', contact_number='', student_classification='ACTIVE'))
+        dispatch('student.save', dict(student_id=sid, name='수정학생', school='', grade='중3', day_of_admission='', contact_number='', student_classification='ACTIVE'))
         dispatch('teacher.save', dict(name='담당교사', contact_number=''))
         tid = db.list_teachers()[-1]['teacher_id']
         dispatch('teacher.save', dict(teacher_id=tid, name='수정교사', contact_number='010-0000-0000'))
         dispatch('course.save', dict(name='새과정', fee='10000'))
         coid = db.list_courses()[-1]['course_id']
         dispatch('course.save', dict(course_id=coid, name='무료과정', fee='0'))
-        dispatch('class.save', dict(course_id=coid, teacher_id=tid, grade='3', class_name='특강', kind='short', start_date='2026-12-01', end_date='2026-12-31'))
+        dispatch('class.save', dict(course_id=coid, teacher_id=tid, grade='중3', class_name='특강', kind='short', start_date='2026-12-01', end_date='2026-12-31'))
         cid = db.list_classes()[-1]['class_id']
-        dispatch('class.save', dict(class_id=cid, teacher_id='', grade='3', class_name='수정특강'))
+        dispatch('class.save', dict(class_id=cid, teacher_id='', grade='중3', class_name='수정특강'))
         self.assertIsNone(db.list_classes()[-1]['teacher_id'])
         dispatch('timetable.save', dict(class_id=cid, schedule={'MON': ['18:00', '20:00']}))
         dispatch('enrollment.add', dict(student_id=sid, class_id=cid, enrolled_date='2026-11-19'))
         dispatch('payment.add', dict(student_id=sid, class_id=cid, payment_date='2026-11-19'))
         self.assertEqual(db.list_payments(sid)[0]['course_fee'], 0)
+        dispatch('payment.add', dict(student_id=sid, class_id=cid, status='UNPAID'))
+        unpaid = next(row for row in db.list_payments(sid) if row['status'] == 'UNPAID')
+        body = dict(payment_id=unpaid['payment_id'], status='PAID', payment_date='2026-11-20')
+        self.assertEqual(self.request('POST', '/api/payment.status', body)[0], 200)
+        body["status"] = "REFUNDED"
+        self.assertEqual(self.request('POST', '/api/payment.status', body)[0], 200)
+        self.assertEqual(db.list_payments(sid)[0]['status'], 'REFUNDED')
         eid = db.list_enrollments()[-1]['enrollment_id']
         dispatch('enrollment.status', dict(enrollment_id=eid, status='CANCELED'))
         with self.assertRaises(ValueError):

@@ -55,7 +55,10 @@ def dispatch(action, data):
     elif action == 'enrollment.status':
         db.update_enrollment_status(int(data['enrollment_id']), data.get('status'))
     elif action == 'payment.add':
-        db.add_class_payment(int(data['student_id']), int(data['class_id']), data.get('payment_date', ''))
+        db.add_class_payment(int(data['student_id']), int(data['class_id']), data.get('payment_date', ''),
+                             data.get('status', 'PAID'))
+    elif action == 'payment.status':
+        db.update_payment_status(int(data['payment_id']), data.get('status'), data.get('payment_date'))
     elif action == 'timetable.save':
         if not isinstance(data.get('schedule'), dict):
             raise ValueError('시간표 형식이 올바르지 않습니다.')
@@ -84,10 +87,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {k: records(fn()) for k, fn in (
                     ('students', db.list_students), ('teachers', db.list_teachers),
                     ('courses', db.list_courses), ('classes', db.list_classes),
-                    ('enrollments', db.list_enrollments))})
+                    ('enrollments', db.list_enrollments))} | {'grade_levels': db.GRADE_LEVELS})
             if url.path == '/api/payments':
                 rows = records(db.list_payments(q.get('student_id'), q.get('start_date'), q.get('end_date')))
-                return self.send(200, {'rows': rows, 'total': sum(r['course_fee'] for r in rows)})
+                return self.send(200, {'rows': rows, 'total': sum(r['course_fee'] for r in rows if r['status'] == 'PAID')})
             if url.path == '/api/student':
                 sid = int(q['id'])
                 return self.send(200, {'enrollments': records(db.list_enrollments_by_student(sid)),
