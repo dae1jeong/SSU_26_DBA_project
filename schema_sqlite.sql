@@ -93,5 +93,4 @@ CREATE INDEX IF NOT EXISTS idx_payment_date           ON payment(payment_date);
 CREATE INDEX IF NOT EXISTS idx_student_classification ON student(student_classification);
 CREATE INDEX IF NOT EXISTS idx_enrollment_class       ON enrollment(class_id);
 CREATE INDEX IF NOT EXISTS idx_enrollment_student     ON enrollment(student_id);
-
 CREATE INDEX IF NOT EXISTS idx_payment_student_date ON payment(student_id, payment_date);
