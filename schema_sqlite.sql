@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS short_course (
 CREATE TABLE IF NOT EXISTS payment (
     payment_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id    INTEGER NOT NULL,
-    enrollment_id INTEGER,
-    billing_month TEXT,
+    enrollment_id INTEGER NOT NULL,
+    billing_month TEXT NOT NULL,
     course_name   TEXT    NOT NULL,
     course_fee    INTEGER NOT NULL CHECK (typeof(course_fee) = 'integer' AND course_fee >= 0),
     payment_date  TEXT,
