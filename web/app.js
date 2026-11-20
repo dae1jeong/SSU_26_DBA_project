@@ -1,7 +1,7 @@
 'use strict';
 const $=s=>document.querySelector(s), esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>Number(v||0).toLocaleString('ko-KR')+'원';
-const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const today=(d=new Date())=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const labels={ACTIVE:'수강 중',INACTIVE:'비활성',BLACK:'블랙리스트',COMPLETED:'수료',CANCELED:'취소',PAID:'완납',UNPAID:'미납',REFUNDED:'환불'};
 const badge=(v,student=false)=>`<span class="badge ${v==='ACTIVE'?'active':v==='BLACK'?'black':''}">${esc(student&&v==='ACTIVE'?'활성':labels[v]||v)}</span>`;
 let state={},page='dashboard',generation=0;
@@ -31,7 +31,12 @@ $('#content').innerHTML=`<div class="stats">${tiles.map(t=>`<div class="stat"><d
 }
 const opts=(rows,idKey,nameKey,selected='',blank='선택하세요')=>`<option value="">${blank}</option>`+rows.map(r=>`<option value="${r[idKey]}" ${String(r[idKey])===String(selected)?'selected':''}>${esc(r[nameKey])} (ID: ${r[idKey]})</option>`).join('');
 async function payments(token){
-    const month = today().slice(0,7);
+    const endDate = new Date();
+    const startDate = new Date(endDate);
+    startDate.setFullYear(startDate.getFullYear()-1);
+    // Leap day falls on February 28 in a non-leap year.
+    if(startDate.getMonth()!==endDate.getMonth()) startDate.setDate(0);
+    const month = today(endDate).slice(0,7);
     const targets = card('결제 대상','청구월에 해당하는 현재 수강 건입니다.',
         `<form id="target-filter" class="toolbar">
             <label>대상 청구월 <input type="month" name="billing_month" value="${month}" required></label>
@@ -49,6 +54,8 @@ async function payments(token){
     $('#target-filter').addEventListener('submit',event=>{event.preventDefault();loadPaymentTargets()});
     $('#target-filter').billing_month.addEventListener('change',()=>loadPaymentTargets());
     const form=$('#payment-filter');
+    form.elements.start_date.value=today(startDate);
+    form.elements.end_date.value=today(endDate);
     form.addEventListener('submit',event=>{event.preventDefault();loadPayments()});
     form.addEventListener('reset',()=>setTimeout(()=>{if(form.isConnected) loadPayments()},0));
     await Promise.all([loadPaymentTargets(token),loadPayments(token)]);
