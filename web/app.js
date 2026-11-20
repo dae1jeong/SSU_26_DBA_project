@@ -11,7 +11,39 @@ $('#nav').innerHTML=Object.entries(routes).map(([k,v])=>`<a href="#${k}" data-na
 $('#today').textContent=new Intl.DateTimeFormat('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(new Date());
 async function api(url,data){const r=await fetch(url,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const json=await r.json();if(!r.ok)throw Error(json.error||'요청을 처리하지 못했습니다.');return json}
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,3500)}
-function table(headers,rows,empty='등록된 항목이 없습니다.'){return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th scope="col">${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${headers.length}" class="empty"><strong>${esc(empty)}</strong>조건을 바꾸거나 새로운 항목을 등록하세요.</td></tr>`}</tbody></table></div>`}
+function table(headers,rows,empty='등록된 항목이 없습니다.'){return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>h==='관리'?`<th scope="col">${esc(h)}</th>`:`<th scope="col" aria-sort="none"><button type="button" class="table-sort" aria-label="${esc(h)} 오름차순 정렬"><span>${esc(h)}</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${headers.length}" class="empty"><strong>${esc(empty)}</strong>조건을 바꾸거나 새로운 항목을 등록하세요.</td></tr>`}</tbody></table></div>`}
+const tableCollator=new Intl.Collator('ko-KR',{numeric:true,sensitivity:'base'});
+function compareTableValues(a,b){
+    // Missing values stay at the bottom in either direction (handled by sortTable).
+    const numberPattern=/^-?\d[\d,]*(?:\.\d+)?(?:원|개|명|건)?$/;
+    if(numberPattern.test(a)&&numberPattern.test(b)){
+        return Number(a.replace(/[,원개명건]/g,''))-Number(b.replace(/[,원개명건]/g,''));
+    }
+    return tableCollator.compare(a,b);
+}
+function sortTable(button){
+    const header=button.closest('th'),table=header.closest('table'),body=table.tBodies[0];
+    const ascending=header.getAttribute('aria-sort')!=='ascending';
+    const value=row=>row.cells[header.cellIndex].textContent.trim();
+    const missing=v=>!v||v==='—'||v==='-';
+    const rows=Array.from(body.rows).filter(row=>!row.querySelector('td.empty'));
+    rows.sort((a,b)=>{
+        const av=value(a),bv=value(b);
+        if(missing(av)||missing(bv))return Number(missing(av))-Number(missing(bv));
+        return compareTableValues(av,bv)*(ascending?1:-1);
+    });
+    rows.forEach(row=>body.appendChild(row));
+    table.querySelectorAll('th[aria-sort]').forEach(th=>{
+        const active=th===header,control=th.querySelector('.table-sort');
+        th.setAttribute('aria-sort',active?(ascending?'ascending':'descending'):'none');
+        control.querySelector('.sort-arrow').textContent=active?(ascending?'↑':'↓'):'↕';
+        control.setAttribute('aria-label',`${control.firstElementChild.textContent} ${active&&ascending?'내림차순':'오름차순'} 정렬`);
+    });
+}
+document.addEventListener('click',event=>{
+    const control=event.target.closest('.table-sort');
+    if(control)sortTable(control);
+});
 const tr=cells=>`<tr>${cells.map((v,i)=>`<td${i===1?' class="name"':''}>${v}</td>`).join('')}</tr>`;
 const button=(text,action,id)=>`<button data-action="${action}" data-id="${id}">${text}</button>`;
 const actions=items=>`<div class="row-actions">${items.join('')}</div>`;
