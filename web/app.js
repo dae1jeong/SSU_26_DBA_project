@@ -6,10 +6,55 @@ const labels={ACTIVE:'수강 중',INACTIVE:'비활성',BLACK:'블랙리스트',C
 const badge=(v,student=false)=>`<span class="badge ${v==='ACTIVE'?'active':v==='BLACK'?'black':''}">${esc(student&&v==='ACTIVE'?'활성':labels[v]||v)}</span>`;
 let state={},page='dashboard',generation=0;
 const routes={dashboard:['운영 현황','학원의 주요 현황과 최근 업무를 한눈에 확인하세요.'],students:['학생 관리','학생 정보와 재원 상태, 수강 내역을 관리합니다.','학생 등록'],teachers:['선생님 관리','선생님 정보를 관리하고 담당 반을 확인합니다.','선생님 등록'],courses:['수강 과정','과정별 수강비를 설정하고 관리합니다.','과정 등록'],classes:['반 관리','정규반·특강과 담당 선생님, 주간 시간표를 관리합니다.','반 개설'],enrollments:['수강 관리','학생의 반 배정과 수강 상태를 관리합니다.','수강 등록'],payments:['결제 관리','수강료를 등록하고 학생별·기간별 수납 내역을 확인합니다.','결제 등록']};
+const pageEyebrows = {
+    dashboard: 'ACADEMY OVERVIEW',
+    students: 'STUDENT MANAGEMENT',
+    teachers: 'TEACHER MANAGEMENT',
+    courses: 'COURSE MANAGEMENT',
+    classes: 'CLASS MANAGEMENT',
+    enrollments: 'ENROLLMENT MANAGEMENT',
+    payments: 'PAYMENT MANAGEMENT',
+};
 const paths={dashboard:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',students:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M20 8v6 M17 11h6',teachers:'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M4 21v-2a6 6 0 0 1 6-5h4a6 6 0 0 1 6 5v2',courses:'M4 3h6a3 3 0 0 1 3 3v15a4 4 0 0 0-4-3H4z M13 6a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 3',classes:'M3 21h18 M5 21V4h14v17 M9 8h1 M14 8h1 M9 12h1 M14 12h1 M10 21v-5h4v5',enrollments:'M8 4H4v17h16V4h-4 M8 2h8v5H8z M8 12l2 2 5-5 M8 18h8',payments:'M3 5h18v14H3z M3 10h18 M7 15h3'};
 $('#nav').innerHTML=Object.entries(routes).map(([k,v])=>`<a href="#${k}" data-nav="${k}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[k]}"/></svg>${v[0]}</a>`).join('');
-$('#today').textContent=new Intl.DateTimeFormat('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(new Date());
-async function api(url,data){const r=await fetch(url,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const json=await r.json();if(!r.ok)throw Error(json.error||'요청을 처리하지 못했습니다.');return json}
+const sidebarToggle = $('#sidebar-toggle');
+sidebarToggle.addEventListener('click', () => {
+    const collapsed = document.body.classList.toggle('sidebar-collapsed');
+    sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+});
+const headerDate = new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'short',
+});
+const headerTime = new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+});
+const headerClock = $('#today');
+function updateHeaderClock() {
+    const now = new Date();
+    const dateParts = headerDate.formatToParts(now).map(({type, value}) => {
+        if (type !== 'weekday') return value;
+        const weekday = document.createElement('span');
+        weekday.className = 'header-weekday';
+        weekday.textContent = value;
+        return weekday;
+    });
+    const time = document.createElement('span');
+    time.className = 'header-time';
+    time.textContent = headerTime.format(now);
+    headerClock.replaceChildren(...dateParts, ' · ', time);
+}
+updateHeaderClock();
+setInterval(updateHeaderClock, 1000);
+let loginToken = '';
+async function api(url, data) {
+    const headers = {};
+    if (loginToken) headers.Authorization = `Bearer ${loginToken}`;
+    if (data) headers['Content-Type'] = 'application/json';
+    const response = await fetch(url, data ? {method:'POST', headers, body:JSON.stringify(data)} : {headers});
+    const json = await response.json();
+    if (!response.ok) throw Error(json.error || '요청을 처리하지 못했습니다.');
+    return json;
+}
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,3500)}
 function table(headers,rows,empty='등록된 항목이 없습니다.'){return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>h==='관리'?`<th scope="col">${esc(h)}</th>`:`<th scope="col" aria-sort="none"><button type="button" class="table-sort" aria-label="${esc(h)} 오름차순 정렬"><span>${esc(h)}</span><span class="sort-arrow" aria-hidden="true">↕</span></button></th>`).join('')}</tr></thead><tbody>${rows.length?rows.join(''):`<tr><td colspan="${headers.length}" class="empty"><strong>${esc(empty)}</strong>조건을 바꾸거나 새로운 항목을 등록하세요.</td></tr>`}</tbody></table></div>`}
 const tableCollator=new Intl.Collator('ko-KR',{numeric:true,sensitivity:'base'});
@@ -21,18 +66,21 @@ function compareTableValues(a,b){
     }
     return tableCollator.compare(a,b);
 }
+const paginatedTables = new WeakMap();
 function sortTable(button){
     const header=button.closest('th'),table=header.closest('table'),body=table.tBodies[0];
     const ascending=header.getAttribute('aria-sort')!=='ascending';
     const value=row=>row.cells[header.cellIndex].textContent.trim();
     const missing=v=>!v||v==='—'||v==='-';
-    const rows=Array.from(body.rows).filter(row=>!row.querySelector('td.empty'));
+    const pagination = paginatedTables.get(table);
+    const rows = pagination?.rows ?? Array.from(body.rows).filter(row=>!row.querySelector('td.empty'));
     rows.sort((a,b)=>{
         const av=value(a),bv=value(b);
         if(missing(av)||missing(bv))return Number(missing(av))-Number(missing(bv));
         return compareTableValues(av,bv)*(ascending?1:-1);
     });
-    rows.forEach(row=>body.appendChild(row));
+    if (pagination) pagination.reset();
+    else rows.forEach(row=>body.appendChild(row));
     table.querySelectorAll('th[aria-sort]').forEach(th=>{
         const active=th===header,control=th.querySelector('.table-sort');
         th.setAttribute('aria-sort',active?(ascending?'ascending':'descending'):'none');
@@ -55,9 +103,78 @@ if(page==='teachers'){rows=state.teachers.map(r=>tr([r.teacher_id,esc(r.name),es
 if(page==='courses'){rows=state.courses.map(r=>tr([r.course_id,esc(r.name),money(r.fee),state.classes.filter(c=>c.course_id===r.course_id).length+'개',button('수정','course.edit',r.course_id)]));headers=['ID','과정명','수강비','개설 반','관리'];title='수강 과정 목록';count=state.courses.length}
 if(page==='classes'){rows=state.classes.map(r=>tr([r.class_id,`${esc(r.class_name)}<small>${r.start_date?'특강':'정규반'}</small>`,esc(r.course_name),esc(r.teacher_name)||'미지정',esc(r.grade)||'—',r.start_date?`${esc(r.start_date)} ~ ${esc(r.end_date)}`:'—',actions([button('명단','class.roster',r.class_id),button('시간표','class.schedule',r.class_id),button('수정','class.edit',r.class_id)])]));headers=['ID','반 이름','수강 과정','담당 선생님','학년','특강 기간','관리'];title='개설 반 목록';count=state.classes.length}
 if(page==='enrollments'){rows=state.enrollments.map(r=>tr([r.enrollment_id,esc(r.student_name),esc(r.class_name),esc(r.enrolled_date),badge(r.status),button('상태 변경','enrollment.edit',r.enrollment_id)]));headers=['ID','학생명','반 이름','등록일','수강 상태','관리'];title='수강 등록 목록';count=state.enrollments.length}
-return card(title,`총 ${count}건 · 목록에서 정보를 확인하고 관리하세요.`,`<div class="toolbar"><input type="search" class="search" id="search" placeholder="이름, 반, 과정 등으로 검색" aria-label="목록 검색"><span id="search-count">전체 ${count}건</span></div><div id="listing-table">${table(headers,rows)}</div><div class="card-bottom">등록된 정보는 저장 즉시 다른 메뉴에도 반영됩니다.</div>`)}
-async function render(){const token=++generation;page=location.hash.slice(1);if(!routes[page])page='dashboard';$('#title').textContent=routes[page][0];$('#subtitle').textContent=routes[page][1];document.title=routes[page][0]+' · Academy';document.querySelectorAll('[data-nav]').forEach(a=>{a.classList.toggle('active',a.dataset.nav===page);a.setAttribute('aria-current',a.dataset.nav===page?'page':'false')});$('#primary').hidden=!routes[page][2];$('#primary').textContent='+ '+(routes[page][2]||'');$('#content').innerHTML='<div class="empty">데이터를 불러오는 중입니다…</div>';
-try{state=await api('/api/state');if(token!==generation)return;if(page==='dashboard'){const pay=await api('/api/payments');if(token!==generation)return;dashboard(pay)}else if(page==='payments'){await payments(token)}else{$('#content').innerHTML=listing();$('#search').addEventListener('input',e=>{let count=0;document.querySelectorAll('#listing-table tbody tr').forEach(row=>{const match=row.textContent.toLowerCase().includes(e.target.value.toLowerCase());row.hidden=!match;if(match)count++});$('#search-count').textContent=`검색 결과 ${count}건`})}}catch(e){if(token===generation)$('#content').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div><button data-action="retry">다시 시도</button>`}}
+return card(title,`총 ${count}건 · 목록에서 정보를 확인하고 관리하세요.`,`<div class="toolbar"><input type="search" class="search" id="search" placeholder="이름, 반, 과정 등으로 검색" aria-label="목록 검색"><span id="search-count">전체 ${count}건</span></div><div id="listing-table">${table(headers,rows)}</div><div id="listing-pagination"></div><div class="card-bottom">등록된 정보는 저장 즉시 다른 메뉴에도 반영됩니다.</div>`)}
+function mountListing() {
+    $('#content').innerHTML = listing();
+    const search = $('#search');
+    const table = $('#listing-table table');
+    const body = table.tBodies[0];
+    const emptyRow = body.querySelector('td.empty')?.parentElement;
+    const rows = Array.from(body.rows).filter(row => row !== emptyRow);
+    const count = $('#search-count');
+    const controls = $('#listing-pagination');
+    const pageSize = 15;
+    const paginated = page === 'students' || page === 'classes';
+    let currentPage = 1;
+
+    if (paginated) {
+        controls.className = 'listing-pagination';
+        controls.innerHTML = `<span id="listing-page-range" aria-live="polite"></span>
+            <div role="group" aria-label="목록 페이지">
+                <button type="button" data-page-step="-1">이전</button>
+                <span id="listing-page-number"></span>
+                <button type="button" data-page-step="1">다음</button>
+            </div>`;
+    }
+
+    function updateRows() {
+        const query = search.value.trim().toLowerCase();
+        const matches = rows.filter(row => row.textContent.toLowerCase().includes(query));
+        count.textContent = query ? `검색 결과 ${matches.length}건` : `전체 ${rows.length}건`;
+        if (!paginated) {
+            const matchingRows = new Set(matches);
+            rows.forEach(row => { row.hidden = !matchingRows.has(row); });
+            return;
+        }
+
+        const pageCount = Math.max(1, Math.ceil(matches.length / pageSize));
+        currentPage = Math.min(Math.max(1, currentPage), pageCount);
+        const start = (currentPage - 1) * pageSize;
+        if (matches.length) {
+            body.replaceChildren(...matches.slice(start, start + pageSize));
+        } else if (emptyRow) {
+            body.replaceChildren(emptyRow);
+        } else {
+            body.innerHTML = `<tr><td colspan="${table.tHead.rows[0].cells.length}" class="empty">검색 결과가 없습니다.</td></tr>`;
+        }
+        controls.hidden = pageCount === 1;
+        if (pageCount > 1) {
+            $('#listing-page-range').textContent = `전체 ${matches.length}건 중 ${start + 1}–${Math.min(start + pageSize, matches.length)}건`;
+            $('#listing-page-number').textContent = `${currentPage} / ${pageCount}`;
+            controls.querySelector('[data-page-step="-1"]').disabled = currentPage === 1;
+            controls.querySelector('[data-page-step="1"]').disabled = currentPage === pageCount;
+        }
+    }
+
+    function reset() {
+        currentPage = 1;
+        updateRows();
+    }
+
+    if (paginated) {
+        paginatedTables.set(table, {rows, reset});
+        controls.addEventListener('click', event => {
+            const button = event.target.closest('[data-page-step]');
+            if (!button) return;
+            currentPage += Number(button.dataset.pageStep);
+            updateRows();
+        });
+    }
+    search.addEventListener('input', reset);
+    updateRows();
+}
+async function render(){const token=++generation;page=location.hash.slice(1);if(!Object.hasOwn(routes,page))page='dashboard';$('#page-eyebrow').textContent=pageEyebrows[page];$('#title').textContent=routes[page][0];$('#subtitle').textContent=routes[page][1];document.title=routes[page][0]+' · Academy';document.querySelectorAll('[data-nav]').forEach(a=>{a.classList.toggle('active',a.dataset.nav===page);a.setAttribute('aria-current',a.dataset.nav===page?'page':'false')});$('#primary').hidden=!routes[page][2];$('#primary').textContent='+ '+(routes[page][2]||'');$('#content').innerHTML='<div class="empty">데이터를 불러오는 중입니다…</div>';
+try{state=await api('/api/state');if(token!==generation)return;if(page==='dashboard'){const pay=await api('/api/payments');if(token!==generation)return;dashboard(pay)}else if(page==='payments'){await payments(token)}else{mountListing()}}catch(e){if(token===generation)$('#content').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div><button data-action="retry">다시 시도</button>`}}
 function dashboard(pay){const active=state.students.filter(s=>s.student_classification==='ACTIVE').length;const tiles=[['전체 학생',state.students.length,'명',`활성 학생 ${active}명`,'♙'],['운영 중인 반',state.classes.length,'개',`정규 ${state.classes.filter(c=>!c.start_date).length} · 특강 ${state.classes.filter(c=>c.start_date).length}`,'▦'],['수강 중인 등록',state.enrollments.filter(e=>e.status==='ACTIVE').length,'건','현재 ACTIVE 수강 기준','≡'],['누적 수납',Number(pay.total).toLocaleString('ko-KR'),'원',`전체 결제 ${pay.rows.length}건`,'₩']];
 $('#content').innerHTML=`<div class="stats">${tiles.map(t=>`<div class="stat"><div class="stat-top">${t[0]}<span class="stat-symbol">${t[4]}</span></div><strong>${t[1]}<small>${t[2]}</small></strong><p>${t[3]}</p></div>`).join('')}</div><div class="grid-two">${card('최근 등록 학생','최근 등록된 학생 5명을 확인하세요.',table(['ID','학생명','학교','상태'],state.students.slice(-5).reverse().map(s=>tr([s.student_id,esc(s.name),esc(s.school)||'—',badge(s.student_classification,true)]))))}${card('최근 결제 내역','결제일 기준 최근 수납 내역입니다.',table(['학생명','수강 과정','금액','결제일'],pay.rows.filter(r=>r.status==='PAID').slice(0,5).map(r=>tr([esc(r.student_name),esc(r.course_name),money(r.course_fee),esc(r.payment_date)]))))}</div><p class="section-label">자주 사용하는 업무</p><div class="quick-links"><a href="#students">학생 정보 관리 <span>↗</span></a><a href="#classes">반 · 시간표 관리 <span>↗</span></a><a href="#enrollments">수강 등록 및 상태 변경 <span>↗</span></a><a href="#payments">결제 등록 · 수납 조회 <span>↗</span></a></div>`;
 }
@@ -216,4 +333,50 @@ async function scheduleEditor(id){const r=state.classes.find(c=>c.class_id===id)
 $('#primary').onclick=()=>({students:studentEditor,teachers:teacherEditor,courses:courseEditor,classes:classEditor,enrollments:enrollmentEditor,payments:paymentEditor}[page]?.());
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const id=Number(b.dataset.id);try{switch(b.dataset.action){case 'retry':await render();break;case 'student.edit':studentEditor(state.students.find(r=>r.student_id===id));break;case 'student.history':await studentHistory(id);break;case 'teacher.edit':teacherEditor(state.teachers.find(r=>r.teacher_id===id));break;case 'course.edit':courseEditor(state.courses.find(r=>r.course_id===id));break;case 'class.edit':classEditor(state.classes.find(r=>r.class_id===id));break;case 'class.roster':await classRoster(id);break;case 'class.schedule':await scheduleEditor(id);break;case 'enrollment.edit':enrollmentStatus(state.enrollments.find(r=>r.enrollment_id===id));break;case 'payment.paid':paymentStatusEditor(id,'PAID');break;case 'payment.refund':paymentStatusEditor(id,'REFUNDED');break}}catch(err){toast(err.message)}});
 $('.skip').addEventListener('click',e=>{e.preventDefault();$('#main').focus()});
-window.addEventListener('hashchange',render);render();
+const loginForm = $('#login-form');
+const profileMenu = $('#profile-menu');
+document.addEventListener('click', event => {
+    if (profileMenu.open && !profileMenu.contains(event.target)) profileMenu.open = false;
+});
+profileMenu.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && profileMenu.open) {
+        profileMenu.open = false;
+        profileMenu.querySelector('summary').focus();
+    }
+});
+$('#logout').addEventListener('click', () => {
+    loginToken = '';
+    generation++;
+    state = {};
+    profileMenu.open = false;
+    $('#content').replaceChildren();
+    $('#toast').hidden = true;
+    $('#academy-app').hidden = true;
+    $('#login-screen').hidden = false;
+    $('#login-password').focus();
+});
+loginForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = $('#login-password');
+    const error = $('#login-error');
+    const submit = loginForm.querySelector('button');
+    error.hidden = true;
+    submit.disabled = true;
+    try {
+        const result = await api('/api/login', {password: password.value});
+        loginToken = result.token;
+        password.value = '';
+        $('#login-screen').hidden = true;
+        $('#academy-app').hidden = false;
+        $('#main').focus();
+        render();
+    } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        password.focus();
+        password.select();
+    } finally {
+        submit.disabled = false;
+    }
+});
+window.addEventListener('hashchange', () => { if (loginToken) render(); });

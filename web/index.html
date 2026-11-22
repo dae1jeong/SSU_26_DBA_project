@@ -2,9 +2,36 @@
 <html lang="ko">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>학원 관리 · Academy</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
 <body>
+<section id="login-screen" class="login-screen" aria-labelledby="login-title">
+    <form id="login-form" class="login-card">
+        <p class="eyebrow">홍길동 수학학원</p>
+        <h1 id="login-title">관리자 로그인</h1>
+        <p class="login-description">학원 관리 시스템에 접속하려면 로그인하세요.</p>
+        <div class="field">
+            <label for="login-password">관리자 비밀번호</label>
+            <input id="login-password" type="password" autocomplete="current-password" required autofocus>
+        </div>
+        <p id="login-error" class="error" role="alert" hidden></p>
+        <button class="primary" type="submit">로그인</button>
+    </form>
+</section>
+<div id="academy-app" hidden>
 <a class="skip" href="#main">본문으로 이동</a>
-<aside class="sidebar"><a class="brand" href="#dashboard"><span class="brand-icon">A</span><span>Academy<small>학원 관리 시스템</small></span></a><p class="nav-label">WORKSPACE</p><nav aria-label="주요 메뉴" id="nav"></nav><div class="sidebar-foot"><span class="status-dot"></span> 학원 운영 워크스페이스<small>학생부터 수납까지, 한곳에서</small></div></aside>
-<div class="workspace"><header class="topbar"><span>중고등 수학학원</span><div><span id="today"></span><span class="avatar" aria-label="관리자">관</span></div></header><main id="main" tabindex="-1"><div class="page-heading"><div><p class="eyebrow">ACADEMY MANAGEMENT</p><h1 id="title">운영 현황</h1><p id="subtitle"></p></div><button id="primary" class="primary" hidden></button></div><section id="content" aria-label="관리 내용"></section></main><footer>Academy Workspace <span>학원 운영을 위한 관리 시스템</span></footer></div>
+<aside id="sidebar" class="sidebar"><a class="brand" href="#dashboard"><span class="brand-icon">A</span><span class="brand-name">홍길동 수학학원</span></a><p class="nav-label">운영 메뉴</p><nav aria-label="주요 메뉴" id="nav"></nav><div class="sidebar-foot"><span class="status-dot"></span> 학원 운영 워크스페이스<small>학생부터 수납까지, 한곳에서</small></div></aside>
+<div class="workspace"><header class="topbar">
+    <div class="topbar-leading">
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="메뉴" aria-controls="sidebar" aria-expanded="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+        </button>
+        <span class="topbar-title">홍길동 중고등 수학학원 관리 시스템</span>
+    </div>
+    <div class="topbar-meta"><span id="today"></span><details id="profile-menu" class="profile-menu">
+        <summary class="avatar" aria-label="관리자 메뉴">관</summary>
+        <div class="profile-actions"><button id="logout" type="button">로그아웃</button></div>
+    </details></div></header><main id="main" tabindex="-1"><div class="page-heading"><div><p id="page-eyebrow" class="eyebrow">ACADEMY OVERVIEW</p><h1 id="title">운영 현황</h1><p id="subtitle"></p></div><button id="primary" class="primary" hidden></button></div><section id="content" aria-label="관리 내용"></section></main><footer>Academy Workspace <span>학원 운영을 위한 관리 시스템</span></footer></div>
 <dialog id="dialog" aria-labelledby="dialog-title"><div class="dialog-head"><div><p class="eyebrow">ACADEMY WORKSPACE</p><h2 id="dialog-title"></h2></div><button class="icon-button" id="close-dialog" aria-label="닫기">×</button></div><div id="dialog-body"></div></dialog>
 <div class="toast" id="toast" role="status" hidden></div>
+</div>
 </body></html>

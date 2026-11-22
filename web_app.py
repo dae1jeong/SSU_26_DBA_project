@@ -1,6 +1,8 @@
-"""로컬 학원 관리 웹 앱. 실행: python3 web_app.py (외부 의존성 없음)."""
+"""로컬 학원 관리 웹 앱. 실행: python3 web_app.py."""
 import argparse
 import json
+import os
+import secrets
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +13,7 @@ from mysql.connector import DataError, IntegrityError
 import db
 
 WEB = Path(__file__).resolve().parent / 'web'
+LOGIN_TOKEN = secrets.token_urlsafe(32)
 
 
 def records(rows):
@@ -69,6 +72,10 @@ def dispatch(action, data):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def is_authenticated(self):
+        supplied = self.headers.get('Authorization', '')
+        return secrets.compare_digest(supplied.encode(), f'Bearer {LOGIN_TOKEN}'.encode())
+
     def send(self, status, payload, mime='application/json; charset=utf-8'):
         body = json.dumps(payload, ensure_ascii=False).encode() if mime.startswith('application/json') else payload
         self.send_response(status)
@@ -82,6 +89,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlsplit(self.path)
+        if url.path.startswith('/api/') and not self.is_authenticated():
+            return self.send(401, {'error': '관리자 로그인이 필요합니다.'})
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         try:
             if url.path == '/api/state':
@@ -123,6 +132,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {'error': '허용되지 않은 요청입니다.'})
         if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.send(415, {'error': 'JSON 요청만 허용합니다.'})
+        path = urlsplit(self.path).path
+        if path != '/api/login' and not self.is_authenticated():
+            return self.send(401, {'error': '관리자 로그인이 필요합니다.'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 65536:
@@ -130,7 +142,13 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError('요청 형식이 올바르지 않습니다.')
-            dispatch(urlsplit(self.path).path.removeprefix('/api/'), data)
+            if path == '/api/login':
+                password = data.get('password')
+                expected = os.environ.get('ACADEMY_WEB_PASSWORD', 'admin')
+                if not isinstance(password, str) or not secrets.compare_digest(password.encode(), expected.encode()):
+                    return self.send(401, {'error': '관리자 비밀번호가 올바르지 않습니다.'})
+                return self.send(200, {'token': LOGIN_TOKEN})
+            dispatch(path.removeprefix('/api/'), data)
             self.send(200, {'ok': True})
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             # DB의 사용자용 검증 메시지는 그대로 전달한다.

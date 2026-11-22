@@ -8,7 +8,7 @@ from email.message import Message
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import db
-from web_app import dispatch, Handler
+from web_app import dispatch, Handler, LOGIN_TOKEN
 
 
 from mysql_fixture import MySQLTestCase
@@ -48,13 +48,15 @@ class WebWorkflows(MySQLTestCase):
         self.assertEqual(len(db.list_students_by_class(cid)), 1)
         self.assertEqual(db.list_timetable_by_class(cid)[0]['start_time'], '18:00')
 
-    def request(self, method, path, body=None, origin=None, content_type='application/json'):
+    def request(self, method, path, body=None, origin=None, content_type='application/json', token=LOGIN_TOKEN):
         h = Handler.__new__(Handler)
         h.path = path
         h.server = SimpleNamespace(server_port=8000)
         h.headers = Message()
         h.headers['Host'] = '127.0.0.1:8000'
         h.headers['Content-Type'] = content_type
+        if token:
+            h.headers['Authorization'] = f'Bearer {token}'
         if origin:
             h.headers['Origin'] = origin
         raw = json.dumps(body).encode() if body is not None else b''
