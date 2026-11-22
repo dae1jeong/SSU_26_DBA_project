@@ -53,10 +53,10 @@ INSERT INTO timetable (day_of_class, class_id, start_time, end_time) VALUES
  ('THU', 3, '18:30', '20:30'),
  ('SAT', 4, '10:00', '12:00');
 
--- 결제 (student_id, course_name, course_fee, payment_date, status)
-INSERT INTO payment (student_id, course_name, course_fee, payment_date, status) VALUES
- (1, '중등 수학 정규반', 250000, '2026-03-02', 'PAID'),
- (2, '중등 수학 정규반', 250000, '2026-03-05', 'PAID'),
- (3, '고등 수학 정규반', 320000, '2026-03-10', 'PAID'),
- (4, '고등 미적분 심화', 400000, '2026-04-01', 'PAID'),
- (3, '겨울방학 특강',     180000, '2026-11-20', 'PAID');
+-- 결제: 해당 수강에 연결하고 청구월은 결제일과 같은 달의 1일로 설정
+INSERT INTO payment (student_id, enrollment_id, billing_month, course_name, course_fee, payment_date, status) VALUES
+ (1, 1, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-02', 'PAID'),
+ (2, 2, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-05', 'PAID'),
+ (3, 3, '2026-03-01', '고등 수학 정규반', 320000, '2026-03-10', 'PAID'),
+ (4, 4, '2026-04-01', '고등 미적분 심화', 400000, '2026-04-01', 'PAID'),
+ (3, 5, '2026-11-01', '겨울방학 특강',     180000, '2026-11-20', 'PAID');
