@@ -4,7 +4,7 @@ app.py - Tkinter GUI (프론트엔드)
 중고등 수학학원 관리 시스템
 
 실행: python app.py
-- 실행 시 academy.db가 없으면 자동 생성(스키마 + 샘플데이터).
+- 실행 전에 MySQL 서버에 v6 스키마를 적용하고 접속 환경 변수를 설정합니다.
 - 탭: 학생 관리 / 선생님 관리 / 수강 과정 관리 / 반 관리 / 수강 등록 / 결제
 - 모든 DB 작업은 db.py 함수를 통해서만 수행 (화면/DB 분리)
 
@@ -15,7 +15,8 @@ app.py - Tkinter GUI (프론트엔드)
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
+from datetime import date
 
 import db
 
@@ -66,7 +67,7 @@ def setup_style(root):
 class AcademyApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("중고등 수학학원 관리 시스템 (초안)")
+        self.title("중고등 수학학원 관리 시스템")
         self.geometry("900x600")
         setup_style(self)
 
@@ -108,7 +109,9 @@ class StudentTab(ttk.Frame):
 
         self.e_name = self._row(form, "이름", 0)
         self.e_school = self._row(form, "학교", 1)
-        self.e_grade = self._row(form, "학년", 2)
+        ttk.Label(form, text="학년").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        self.e_grade = ttk.Combobox(form, values=("", *db.GRADE_LEVELS), state="readonly")
+        self.e_grade.grid(row=2, column=1, sticky="we", padx=6, pady=4)
         self.e_date = self._row(form, "등록일(YYYY-MM-DD)", 3)
         self.e_contact = self._row(form, "연락처", 4)
 
@@ -133,8 +136,75 @@ class StudentTab(ttk.Frame):
             self.tree.column(c, width=w, anchor="center")
         self.tree.pack(fill="both", expand=True, padx=8, pady=8)
         self.tree.bind("<ButtonRelease-1>", self.on_classification_click)
+        actions = ttk.Frame(self)
+        actions.pack(fill="x", padx=8)
+        ttk.Button(actions, text="학생 정보 수정", command=self.edit_student).pack(side="left")
+        ttk.Button(actions, text="학생별 수강 목록 / 총 수강비", command=self.show_enrollments).pack(side="left", padx=8)
+
 
         self.refresh()
+
+    def selected_student(self):
+        items = self.tree.selection()
+        if not items:
+            messagebox.showwarning("학생 선택", "학생을 선택하세요.", parent=self)
+            return None
+        sid = int(self.tree.set(items[0], "id"))
+        return next((r for r in db.list_students() if r["student_id"] == sid), None)
+
+    def edit_student(self):
+        record = self.selected_student()
+        if record is None:
+            return
+        window = tk.Toplevel(self)
+        window.title("학생 정보 수정")
+        window.transient(self.winfo_toplevel())
+        fields = []
+        for i, (label, key) in enumerate((("이름", "name"), ("학교", "school"), ("학년", "grade"),
+                                         ("등록일(YYYY-MM-DD)", "day_of_admission"), ("연락처", "contact_number"))):
+            if key == "grade":
+                ttk.Label(window, text=label).grid(row=i, column=0, sticky="w", padx=6, pady=4)
+                entry = ttk.Combobox(window, values=("", *db.GRADE_LEVELS), state="readonly")
+                entry.grid(row=i, column=1, sticky="we", padx=6, pady=4)
+                entry.set(record[key] or "")
+            else:
+                entry = self._row(window, label, i)
+                entry.insert(0, str(record[key]) if record[key] is not None else "")
+            fields.append(entry)
+        ttk.Label(window, text="분류").grid(row=5, column=0, padx=6, pady=4)
+        classification = ttk.Combobox(window, values=("ACTIVE", "INACTIVE", "BLACK"), state="readonly")
+        classification.set(record["student_classification"])
+        classification.grid(row=5, column=1, padx=6, pady=4)
+        def save():
+            try:
+                db.update_student(record["student_id"], *(e.get() for e in fields), classification.get())
+            except Exception as ex:
+                messagebox.showerror("수정 오류", str(ex), parent=window)
+                return
+            window.destroy()
+            self.refresh()
+        ttk.Button(window, text="저장", command=save).grid(row=6, column=0, pady=8)
+        ttk.Button(window, text="취소", command=window.destroy).grid(row=6, column=1, pady=8)
+        window.grab_set()
+
+    def show_enrollments(self):
+        record = self.selected_student()
+        if record is None:
+            return
+        rows = db.list_enrollments_by_student(record["student_id"])
+        window = tk.Toplevel(self)
+        window.title(f"{record['name']} (ID: {record['student_id']}) - 수강 목록")
+        window.geometry("800x400")
+        total = sum(r["fee"] for r in rows if r["status"] == "ACTIVE")
+        ttk.Label(window, text=f"현재 수강비 합계: {total:,}원 (ACTIVE만 합산 · 현재 과정 가격 기준, 납부액 아님)").pack(padx=8, pady=8)
+        tree = ttk.Treeview(window, columns=("id", "class", "course", "fee", "date", "status"), show="headings")
+        for key, title in zip(tree["columns"], ("수강 ID", "반", "과정", "현재 수강비", "등록일", "상태")):
+            tree.heading(key, text=title)
+            tree.column(key, width=120, anchor="center")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        for r in rows:
+            tree.insert("", "end", values=tuple(r))
+        ttk.Button(window, text="닫기", command=window.destroy).pack(pady=8)
 
     def on_classification_click(self, event):
         if self.tree.identify_region(event.x, event.y) != "cell":
@@ -184,14 +254,14 @@ class StudentTab(ttk.Frame):
             return
         try:
             grade = self.e_grade.get().strip()
-            grade = int(grade) if grade else None
             db.add_student(
                 name, self.e_school.get().strip() or None, grade,
                 self.e_date.get().strip() or None, self.e_contact.get().strip() or None,
                 self.cb_cls.get(),
             )
             messagebox.showinfo("완료", f"'{name}' 학생이 등록되었습니다.")
-            for e in (self.e_name, self.e_school, self.e_grade, self.e_date, self.e_contact):
+            self.e_grade.set("")
+            for e in (self.e_name, self.e_school, self.e_date, self.e_contact):
                 e.delete(0, "end")
             self.refresh()
         except Exception as ex:
@@ -442,7 +512,7 @@ class ClassTab(ttk.Frame):
         self.cb_teacher.grid(row=1, column=1, sticky="we", padx=6, pady=4)
 
         ttk.Label(form, text="학년").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-        self.e_grade = ttk.Entry(form)
+        self.e_grade = ttk.Combobox(form, values=("", *db.GRADE_LEVELS), state="readonly")
         self.e_grade.grid(row=2, column=1, sticky="we", padx=6, pady=4)
 
         ttk.Label(form, text="반 이름").grid(row=3, column=0, sticky="w", padx=6, pady=4)
@@ -516,10 +586,9 @@ class ClassTab(ttk.Frame):
         name = ttk.Entry(form, width=35)
         name.grid(row=1, column=1, padx=6, pady=6)
         name.insert(0, record["class_name"])
-        grade = ttk.Entry(form, width=35)
+        grade = ttk.Combobox(form, width=35, values=("", *db.GRADE_LEVELS), state="readonly")
         grade.grid(row=2, column=1, padx=6, pady=6)
-        if record["grade"] is not None:
-            grade.insert(0, str(record["grade"]))
+        grade.set(record["grade"] or "")
         teacher = ttk.Combobox(form, state="readonly", width=33,
                                values=["NULL (미지정)"] + [f'{t["name"]} (ID: {t["teacher_id"]})' for t in teachers])
         teacher.grid(row=3, column=1, padx=6, pady=6)
@@ -700,7 +769,6 @@ class ClassTab(ttk.Frame):
             if self.cb_teacher.current() > 0:
                 teacher_id = self.teachers[self.cb_teacher.current() - 1]["teacher_id"]
             grade = self.e_grade.get().strip()
-            grade = int(grade) if grade else None
             if self.is_short_course:
                 db.add_short_course(
                     course_id, teacher_id, grade, self.e_name.get().strip(),
@@ -710,7 +778,7 @@ class ClassTab(ttk.Frame):
                 db.add_class(course_id, teacher_id, grade, self.e_name.get().strip())
             messagebox.showinfo("완료", "특강이 생성되었습니다." if self.is_short_course else "반이 생성되었습니다.")
             self.e_name.delete(0, "end")
-            self.e_grade.delete(0, "end")
+            self.e_grade.set("")
             self.e_start_date.delete(0, "end")
             self.e_end_date.delete(0, "end")
             self.refresh()
@@ -725,6 +793,7 @@ class ClassTab(ttk.Frame):
         self.courses = list(db.list_courses())
         self.teachers = list(db.list_teachers())
         self.cb_course["values"] = [f'{c["name"]} ({c["fee"]}원)' for c in self.courses]
+        self.cb_course.set("")
         self.cb_teacher["values"] = ["NULL (미지정)"] + [f'{t["name"]} (ID: {t["teacher_id"]})' for t in self.teachers]
         self.cb_teacher.current(next((i + 1 for i, t in enumerate(self.teachers)
                                       if t["teacher_id"] == previous_teacher), 0))
@@ -758,9 +827,18 @@ class EnrollTab(ttk.Frame):
         ttk.Label(form, text="등록일(YYYY-MM-DD)").grid(row=2, column=0, sticky="w", padx=6, pady=4)
         self.e_date = ttk.Entry(form)
         self.e_date.grid(row=2, column=1, sticky="we", padx=6, pady=4)
+        self.e_date.insert(0, date.today().isoformat())
 
         ttk.Button(form, text="수강 등록", command=self.on_add).grid(row=3, column=0, columnspan=2, pady=6)
         form.columnconfigure(1, weight=1)
+
+        controls = ttk.Frame(self)
+        controls.pack(fill="x", padx=8)
+        ttk.Label(controls, text="선택한 수강 상태").pack(side="left")
+        self.cb_status = ttk.Combobox(controls, values=("ACTIVE", "COMPLETED", "CANCELED"), state="readonly", width=14)
+        self.cb_status.set("COMPLETED")
+        self.cb_status.pack(side="left", padx=8)
+        ttk.Button(controls, text="상태 변경", command=self.change_status).pack(side="left")
 
         cols = ("id", "student", "class", "date", "status")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=12)
@@ -776,6 +854,19 @@ class EnrollTab(ttk.Frame):
         self.classes = []
         self.refresh()
 
+    def change_status(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("수강 선택", "변경할 수강을 선택하세요.", parent=self)
+            return
+        try:
+            db.update_enrollment_status(int(self.tree.set(selection[0], "id")), self.cb_status.get())
+        except Exception as ex:
+            messagebox.showerror("변경 오류", str(ex), parent=self)
+            return
+        self.refresh()
+        messagebox.showinfo("완료", "수강 상태가 변경되었습니다.", parent=self)
+
     def on_add(self):
         if self.cb_student.current() < 0 or self.cb_class.current() < 0:
             messagebox.showwarning("입력 오류", "학생과 반을 선택하세요.")
@@ -783,7 +874,7 @@ class EnrollTab(ttk.Frame):
         try:
             sid = self.students[self.cb_student.current()]["student_id"]
             cid = self.classes[self.cb_class.current()]["class_id"]
-            date = self.e_date.get().strip() or "2026-11-14"
+            date = self.e_date.get().strip() or ""
             db.add_enrollment(sid, cid, date)
             messagebox.showinfo("완료", "수강 등록되었습니다.")
             self.refresh()
@@ -793,8 +884,10 @@ class EnrollTab(ttk.Frame):
     def refresh(self):
         self.students = list(db.list_students())
         self.classes = list(db.list_classes())
-        self.cb_student["values"] = [f'{s["name"]} ({s["student_classification"]})' for s in self.students]
+        self.cb_student["values"] = [f'{s["name"]} (ID: {s["student_id"]}, {s["student_classification"]})' for s in self.students]
         self.cb_class["values"] = [c["class_name"] for c in self.classes]
+        self.cb_student.set("")
+        self.cb_class.set("")
         for i in self.tree.get_children():
             self.tree.delete(i)
         for r in db.list_enrollments():
@@ -830,21 +923,54 @@ class PaymentTab(ttk.Frame):
         ttk.Label(form, text="결제일(YYYY-MM-DD)").grid(row=3, column=0, sticky="w", padx=6, pady=4)
         self.e_date = ttk.Entry(form)
         self.e_date.grid(row=3, column=1, sticky="we", padx=6, pady=4)
+        self.e_date.insert(0, date.today().isoformat())
 
+        ttk.Label(form, text="결제 상태").grid(row=4, column=0, sticky="w", padx=6, pady=4)
+        self.cb_payment_status = ttk.Combobox(form, values=("완납", "미납"), state="readonly")
+        self.cb_payment_status.current(0)
+        self.cb_payment_status.grid(row=4, column=1, sticky="we", padx=6, pady=4)
+        self.cb_payment_status.bind("<<ComboboxSelected>>", lambda event: self.e_date.configure(
+            state="normal" if self.cb_payment_status.current() == 0 else "disabled"))
         self.btn_add = ttk.Button(form, text="결제 등록", command=self.on_add, state="disabled")
-        self.btn_add.grid(row=4, column=0, columnspan=2, pady=6)
+        ttk.Label(form, text="청구월(YYYY-MM)").grid(row=5, column=0, sticky="w", padx=6, pady=4)
+        self.e_month = ttk.Entry(form)
+        self.e_month.grid(row=5, column=1, sticky="we", padx=6, pady=4)
+        self.e_month.insert(0, date.today().isoformat()[:7])
+        self.e_month.bind("<FocusOut>", self.on_student_selected)
+        self.e_month.bind("<Return>", self.on_student_selected)
+        self.btn_add.grid(row=6, column=0, columnspan=2, pady=6)
         self.selection_hint = ttk.Label(form, text="학생을 선택하면 수강 중인 반을 확인할 수 있습니다.")
-        self.selection_hint.grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        self.selection_hint.grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=4)
         form.columnconfigure(1, weight=1)
 
+        filters = ttk.LabelFrame(self, text="결제 내역 조회 (학생·기간 조건을 함께 적용, 경계 날짜 포함)")
+        filters.pack(fill="x", padx=8, pady=4)
+        self.cb_filter_student = ttk.Combobox(filters, state="readonly", width=24)
+        self.cb_filter_student.pack(side="left", padx=4)
+        self.filter_start = ttk.Entry(filters, width=12)
+        self.filter_start.pack(side="left", padx=4)
+        ttk.Label(filters, text="~").pack(side="left")
+        self.filter_end = ttk.Entry(filters, width=12)
+        self.filter_end.pack(side="left", padx=4)
+        ttk.Label(filters, text="청구월").pack(side="left")
+        self.filter_month = ttk.Entry(filters, width=9)
+        self.filter_month.pack(side="left", padx=4)
+        ttk.Button(filters, text="조회", command=self.reload_payments).pack(side="left", padx=4)
+        ttk.Button(filters, text="전체 보기", command=self.reset_filters).pack(side="left")
+        ttk.Label(self, text="조회 기간: YYYY-MM-DD · 빈 시작일/종료일은 해당 방향 제한 없음").pack(anchor="w", padx=8)
         self.lbl_total = ttk.Label(self, text="총 매출: -")
         self.lbl_total.pack(anchor="e", padx=12)
 
-        cols = ("id", "student", "course", "fee", "date")
+        actions = ttk.Frame(self)
+        actions.pack(fill="x", padx=8)
+        ttk.Button(actions, text="결제 대상 조회", command=self.show_payment_targets).pack(side="left")
+        ttk.Button(actions, text="선택한 결제 상태 변경", command=self.change_payment_status).pack(side="left", padx=8)
+        cols = ("id", "student", "class", "course", "month", "fee", "date", "status")
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=11)
         for c, t, w in [
-            ("id", "ID", 40), ("student", "학생", 100), ("course", "과정명", 160),
-            ("fee", "금액", 90), ("date", "결제일", 100),
+            ("id", "ID", 40), ("student", "학생", 100), ("class", "반", 105), ("course", "과정명", 140),
+            ("month", "청구월", 70),
+            ("fee", "금액", 90), ("date", "결제일", 100), ("status", "상태", 70),
         ]:
             self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor="center")
@@ -852,6 +978,62 @@ class PaymentTab(ttk.Frame):
 
         self.students = []
         self.refresh()
+
+    def show_payment_targets(self):
+        window = tk.Toplevel(self)
+        window.title("월별 결제 대상")
+        window.geometry("720x420")
+        window.transient(self.winfo_toplevel())
+        controls = ttk.Frame(window, padding=8)
+        controls.pack(fill="x")
+        ttk.Label(controls, text="청구월(YYYY-MM)").pack(side="left", padx=4)
+        month = ttk.Entry(controls, width=10)
+        month.insert(0, self.e_month.get())
+        month.pack(side="left", padx=4)
+        tree = ttk.Treeview(window, columns=("student", "class", "fee", "status"), show="headings",
+                            selectmode="browse")
+        for column, label, width in (("student", "학생", 180), ("class", "반", 160),
+                                     ("fee", "수강비", 120), ("status", "상태", 100)):
+            tree.heading(column, text=label)
+            tree.column(column, width=width, anchor="center")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        labels = {"PAID": "완납", "UNPAID": "미납", "REFUNDED": "환불"}
+        targets = {}
+        loaded_month = None
+
+        def reload_targets():
+            nonlocal targets, loaded_month
+            loaded_month = None
+            tree.delete(*tree.get_children())
+            try:
+                targets = {str(row["enrollment_id"]): row for row in db.list_payment_targets(month.get())}
+            except Exception as error:
+                messagebox.showerror("결제 대상 조회", str(error), parent=window)
+                return
+            loaded_month = month.get()
+            for key, row in targets.items():
+                fee = row["billed_fee"] if row["payment_id"] is not None else row["fee"]
+                tree.insert("", "end", iid=key, values=(f'{row["student_name"]} (ID: {row["student_id"]})',
+                            row["class_name"], f"{fee:,}원", labels.get(row["status"], "미발행")))
+
+        def issue():
+            selection = tree.selection()
+            if not selection or month.get() != loaded_month:
+                messagebox.showwarning("미납 등록", "청구월을 조회하고 대상 행을 선택하세요.", parent=window)
+                return
+            row = targets[selection[0]]
+            try:
+                db.add_class_payment(row["student_id"], row["class_id"], None, "UNPAID", loaded_month)
+            except Exception as error:
+                messagebox.showerror("미납 등록", str(error), parent=window)
+                return
+            reload_targets()
+            self.reload_payments()
+            self.on_student_selected()
+
+        ttk.Button(controls, text="조회", command=reload_targets).pack(side="left", padx=4)
+        ttk.Button(controls, text="선택한 대상 미납 등록", command=issue).pack(side="left", padx=8)
+        reload_targets()
 
     def on_student_selected(self, event=None):
         self.classes = []
@@ -864,13 +1046,15 @@ class PaymentTab(ttk.Frame):
             return
         student_id = self.students[self.cb_student.current()]["student_id"]
         try:
-            self.classes = list(db.list_active_classes_by_student(student_id))
+            self.classes = [row for row in db.list_payment_targets(self.e_month.get(), student_id)
+                            if row["payment_id"] is None]
         except Exception as ex:
             self.selection_hint.configure(text="수강 중인 반을 불러오지 못했습니다.")
-            messagebox.showerror("조회 오류", f"수강 중인 반을 불러오지 못했습니다.\n{ex}", parent=self)
+            if event is None or event.keysym == "Return":
+                messagebox.showerror("조회 오류", str(ex), parent=self)
             return
         if not self.classes:
-            self.selection_hint.configure(text="현재 수강 중인 반이 없습니다.")
+            self.selection_hint.configure(text="선택한 청구월에 미발행 수강이 없습니다.")
             return
         self.cb_class.configure(state="readonly", values=[
             f'{row["class_name"]} · {row["course_name"]} (반 ID: {row["class_id"]})'
@@ -893,7 +1077,8 @@ class PaymentTab(ttk.Frame):
         try:
             sid = self.students[self.cb_student.current()]["student_id"]
             class_id = self.classes[self.cb_class.current()]["class_id"]
-            db.add_class_payment(sid, class_id, self.e_date.get().strip() or "2026-11-14")
+            status = ("PAID", "UNPAID")[self.cb_payment_status.current()]
+            db.add_class_payment(sid, class_id, self.e_date.get(), status, self.e_month.get())
             messagebox.showinfo("완료", "결제가 등록되었습니다.")
             self.refresh()
         except ValueError as ve:
@@ -901,21 +1086,72 @@ class PaymentTab(ttk.Frame):
         except Exception as ex:
             messagebox.showerror("오류", f"결제를 등록하지 못했습니다.\n{ex}")
 
+    def change_payment_status(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("결제 선택", "상태를 바꿀 결제를 선택하세요.", parent=self)
+            return
+        item = selected[0]
+        status = self.tree.set(item, "status")
+        if status == "미납":
+            paid_on = simpledialog.askstring("완납 처리", "실제 결제일 (YYYY-MM-DD)",
+                                             initialvalue=date.today().isoformat(), parent=self)
+            if paid_on is None:
+                return
+            next_status = "PAID"
+        elif status == "완납":
+            if not messagebox.askyesno("환불 처리", "선택한 결제를 전액 환불 상태로 기록할까요?", parent=self):
+                return
+            next_status, paid_on = "REFUNDED", None
+        else:
+            messagebox.showinfo("결제 상태", "이미 환불 처리된 결제입니다.", parent=self)
+            return
+        try:
+            db.update_payment_status(int(self.tree.set(item, "id")), next_status, paid_on)
+        except Exception as exc:
+            messagebox.showerror("변경 오류", str(exc), parent=self)
+            return
+        self.reload_payments()
+
+    def reset_filters(self):
+        self.cb_filter_student.current(0)
+        self.filter_start.delete(0, "end")
+        self.filter_end.delete(0, "end")
+        self.filter_month.delete(0, "end")
+        self.reload_payments()
+
+    def reload_payments(self):
+        sid = self.filter_ids[self.cb_filter_student.current()] if self.cb_filter_student.current() >= 0 else None
+        try:
+            rows = db.list_payments(sid, self.filter_start.get().strip(), self.filter_end.get().strip(), self.filter_month.get().strip())
+        except Exception as ex:
+            messagebox.showerror("조회 오류", str(ex), parent=self)
+            return
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        labels = {"PAID": "완납", "UNPAID": "미납", "REFUNDED": "환불"}
+        for r in rows:
+            self.tree.insert("", "end", values=(r["payment_id"], r["student_name"], r["class_name"] or "", r["course_name"],
+                                                  (r["billing_month"] or "미지정")[:7], r["course_fee"],
+                                                  r["payment_date"] or "", labels[r["status"]]))
+        total = sum(r["course_fee"] for r in rows if r["status"] == "PAID")
+        self.lbl_total.configure(text=f"조회 결과: {len(rows)}건 · 수납 합계: {total:,}원")
+
     def refresh(self):
+        old_ids = getattr(self, "filter_ids", [None])
+        index = self.cb_filter_student.current()
+        previous = old_ids[index] if 0 <= index < len(old_ids) else None
         self.students = list(db.list_students())
-        self.cb_student["values"] = [f'{s["name"]} ({s["student_classification"]})' for s in self.students]
+        self.cb_student["values"] = [f'{r["name"]} (ID: {r["student_id"]}, {r["student_classification"]})' for r in self.students]
         self.cb_student.set("")
         self.on_student_selected()
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        for r in db.list_payments():
-            self.tree.insert("", "end", values=(
-                r["payment_id"], r["student_name"], r["course_name"], r["course_fee"], r["payment_date"],
-            ))
-        self.lbl_total.config(text=f"총 매출: {db.total_revenue():,}원")
+        self.filter_ids = [None] + [r["student_id"] for r in self.students]
+        self.cb_filter_student["values"] = ["전체 학생"] + [f'{r["name"]} (ID: {r["student_id"]})' for r in self.students]
+        self.cb_filter_student.current(self.filter_ids.index(previous) if previous in self.filter_ids else 0)
+        self.reload_payments()
 
 
 if __name__ == "__main__":
-    db.init_db()           # academy.db 없으면 자동 생성(+샘플)
+    db.init_db()           # MySQL v6 연결 확인
     app = AcademyApp()
     app.mainloop()

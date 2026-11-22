@@ -1,3 +1,8 @@
+USE math_academy;
+
+-- MySQL v6 스키마를 처음 적용한 빈 시연 DB에 한 번만 불러옵니다.
+START TRANSACTION;
+
 -- =====================================================
 -- 샘플 데이터 (발표 시연용)
 -- 실행 순서: 부모 테이블 먼저 (teacher, course → class → student → enrollment/payment/timetable/short_course)
@@ -18,11 +23,11 @@ INSERT INTO course (name, fee) VALUES
 
 -- 반 (course_id, teacher_id, grade, class_name)
 INSERT INTO class (course_id, teacher_id, grade, class_name) VALUES
- (1, 1, 2, '중2-A반'),
- (1, 1, 3, '중3-B반'),
- (2, 2, 1, '고1-수학반'),
- (3, 3, 2, '고2-미적분반'),
- (4, 2, 3, '겨울특강-고3');
+ (1, 1, '중2', '중2-A반'),
+ (1, 1, '중3', '중3-B반'),
+ (2, 2, '고1', '고1-수학반'),
+ (3, 3, '고2', '고2-미적분반'),
+ (4, 2, '고3', '겨울특강-고3');
 
 -- 특강(short_course): 5번 반이 특강
 INSERT INTO short_course (class_id, start_date, end_date) VALUES
@@ -30,12 +35,12 @@ INSERT INTO short_course (class_id, start_date, end_date) VALUES
 
 -- 학생
 INSERT INTO student (name, school, grade, day_of_admission, contact_number, student_classification) VALUES
- ('홍길동', '숭실중',   2, '2026-03-02', '010-1000-0001', 'ACTIVE'),
- ('김영희', '숭실중',   3, '2026-03-05', '010-1000-0002', 'ACTIVE'),
- ('이철수', '숭실고',   1, '2026-03-10', '010-1000-0003', 'ACTIVE'),
- ('박민지', '상도고',   2, '2026-04-01', '010-1000-0004', 'ACTIVE'),
- ('최준영', '상도고',   3, '2026-04-15', '010-1000-0005', 'INACTIVE'),
- ('정블랙', '미상',     3, '2026-05-01', '010-1000-0006', 'BLACK');
+ ('홍길동', '숭실중', '중2', '2026-03-02', '010-1000-0001', 'ACTIVE'),
+ ('김영희', '숭실중', '중3', '2026-03-05', '010-1000-0002', 'ACTIVE'),
+ ('이철수', '숭실고', '고1', '2026-03-10', '010-1000-0003', 'ACTIVE'),
+ ('박민지', '상도고', '고2', '2026-04-01', '010-1000-0004', 'ACTIVE'),
+ ('최준영', '상도고', '고3', '2026-04-15', '010-1000-0005', 'INACTIVE'),
+ ('정블랙', '미상', NULL, '2026-05-01', '010-1000-0006', 'BLACK');
 
 -- 수강 등록 (student_id, class_id, enrolled_date, status)
 INSERT INTO enrollment (student_id, class_id, enrolled_date, status) VALUES
@@ -53,10 +58,14 @@ INSERT INTO timetable (day_of_class, class_id, start_time, end_time) VALUES
  ('THU', 3, '18:30', '20:30'),
  ('SAT', 4, '10:00', '12:00');
 
--- 결제 (student_id, course_name, course_fee, payment_date)
-INSERT INTO payment (student_id, course_name, course_fee, payment_date) VALUES
- (1, '중등 수학 정규반', 250000, '2026-03-02'),
- (2, '중등 수학 정규반', 250000, '2026-03-05'),
- (3, '고등 수학 정규반', 320000, '2026-03-10'),
- (4, '고등 미적분 심화', 400000, '2026-04-01'),
- (3, '겨울방학 특강',     180000, '2026-11-20');
+-- 3번 수강의 11월분은 12월에 완납되어 청구월과 실제 결제일이 다릅니다.
+INSERT INTO payment (enrollment_id, billing_month, course_name, course_fee, payment_date, status) VALUES
+ (1, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-02', 'PAID'),
+ (2, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-05', 'REFUNDED'),
+ (3, '2026-03-01', '고등 수학 정규반', 320000, '2026-03-10', 'PAID'),
+ (4, '2026-04-01', '고등 미적분 심화', 400000, '2026-04-01', 'PAID'),
+ (5, '2026-11-01', '겨울방학 특강', 180000, NULL, 'UNPAID'),
+ (3, '2026-11-01', '고등 수학 정규반', 320000, '2026-12-03', 'PAID');
+
+CALL sp_sync_expired_short_courses();
+COMMIT;
