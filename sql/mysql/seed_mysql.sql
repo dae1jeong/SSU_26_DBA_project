@@ -1,6 +1,6 @@
 USE math_academy;
 
--- 최초 생성한 시연 DB에만 불러옵니다.
+-- MySQL v6 스키마를 처음 적용한 빈 시연 DB에 한 번만 불러옵니다.
 START TRANSACTION;
 
 -- =====================================================
@@ -59,13 +59,13 @@ INSERT INTO timetable (day_of_class, class_id, start_time, end_time) VALUES
  ('SAT', 4, '10:00', '12:00');
 
 -- 3번 수강의 11월분은 12월에 완납되어 청구월과 실제 결제일이 다릅니다.
-INSERT INTO payment (student_id, enrollment_id, billing_month, course_name, course_fee, payment_date, status) VALUES
- (1, 1, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-02', 'PAID'),
- (2, 2, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-05', 'REFUNDED'),
- (3, 3, '2026-03-01', '고등 수학 정규반', 320000, '2026-03-10', 'PAID'),
- (4, 4, '2026-04-01', '고등 미적분 심화', 400000, '2026-04-01', 'PAID'),
- (3, 5, '2026-11-01', '겨울방학 특강', 180000, NULL, 'UNPAID'),
- (3, 3, '2026-11-01', '고등 수학 정규반', 320000, '2026-12-03', 'PAID');
+INSERT INTO payment (enrollment_id, billing_month, course_name, course_fee, payment_date, status) VALUES
+ (1, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-02', 'PAID'),
+ (2, '2026-03-01', '중등 수학 정규반', 250000, '2026-03-05', 'REFUNDED'),
+ (3, '2026-03-01', '고등 수학 정규반', 320000, '2026-03-10', 'PAID'),
+ (4, '2026-04-01', '고등 미적분 심화', 400000, '2026-04-01', 'PAID'),
+ (5, '2026-11-01', '겨울방학 특강', 180000, NULL, 'UNPAID'),
+ (3, '2026-11-01', '고등 수학 정규반', 320000, '2026-12-03', 'PAID');
 
 CALL sp_sync_expired_short_courses();
 COMMIT;

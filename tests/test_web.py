@@ -1,7 +1,6 @@
-"""웹 연결 계층의 기능·요청 검증. 실제 데이터 파일을 사용하지 않는다."""
+"""웹 연결 계층의 기능·요청 검증. 별도 MySQL 스키마를 사용한다."""
 import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,17 +11,10 @@ import db
 from web_app import dispatch, Handler
 
 
-class WebWorkflows(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.previous = db.DB_PATH
-        db.DB_PATH = str(Path(self.temp.name) / 'web.db')
-        db.init_db()
+from mysql_fixture import MySQLTestCase
 
-    def tearDown(self):
-        db.DB_PATH = self.previous
-        self.temp.cleanup()
 
+class WebWorkflows(MySQLTestCase):
     def test_web_full_workflow_and_updates(self):
         dispatch('student.save', dict(name='웹학생', school='중학교', grade='중2', day_of_admission='2026-11-19', contact_number='01012345678', student_classification='ACTIVE'))
         self.assertEqual(db.list_students()[-1]['contact_number'], '010-1234-5678')

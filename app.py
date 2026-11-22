@@ -4,7 +4,7 @@ app.py - Tkinter GUI (프론트엔드)
 중고등 수학학원 관리 시스템
 
 실행: python app.py
-- 실행 시 academy.db가 없으면 자동 생성(스키마 + 샘플데이터).
+- 실행 전에 MySQL 서버에 v6 스키마를 적용하고 접속 환경 변수를 설정합니다.
 - 탭: 학생 관리 / 선생님 관리 / 수강 과정 관리 / 반 관리 / 수강 등록 / 결제
 - 모든 DB 작업은 db.py 함수를 통해서만 수행 (화면/DB 분리)
 
@@ -1152,6 +1152,6 @@ class PaymentTab(ttk.Frame):
 
 
 if __name__ == "__main__":
-    db.init_db()           # academy.db 없으면 자동 생성(+샘플)
+    db.init_db()           # MySQL v6 연결 확인
     app = AcademyApp()
     app.mainloop()

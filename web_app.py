@@ -1,12 +1,13 @@
 """로컬 학원 관리 웹 앱. 실행: python3 web_app.py (외부 의존성 없음)."""
 import argparse
 import json
-import sqlite3
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
+from mysql.connector import DataError, IntegrityError
+
 import db
 
 WEB = Path(__file__).resolve().parent / 'web'
@@ -134,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             # DB의 사용자용 검증 메시지는 그대로 전달한다.
             self.send(400, {'error': str(exc) or '입력값을 확인하세요.'})
-        except sqlite3.IntegrityError:
+        except (DataError, IntegrityError):
             self.send(400, {'error': '연결된 항목이나 중복 등록을 확인하세요.'})
         except Exception:
             self.send(500, {'error': '저장 중 오류가 발생했습니다. 다시 시도하세요.'})
@@ -153,11 +154,8 @@ def open_browser(url):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=8000)
-    parser.add_argument('--db', help='별도 SQLite 파일 (시연·검증용)')
     parser.add_argument('--no-browser', action='store_true', help='브라우저 자동 열기 생략')
     args = parser.parse_args()
-    if args.db:
-        db.DB_PATH = str(Path(args.db).resolve())
     db.init_db()
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     url = f'http://127.0.0.1:{server.server_port}'

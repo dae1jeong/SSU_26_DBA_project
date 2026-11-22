@@ -1,6 +1,4 @@
-"""실제 academy.db를 변경하지 않는 기능 통합 검사."""
-import sqlite3
-import tempfile
+"""별도 MySQL 스키마에서 실행하는 기능 통합 검사."""
 import unittest
 from unittest.mock import patch
 from datetime import date, timedelta
@@ -10,17 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import db
 
 
-class Workflows(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.old_path = db.DB_PATH
-        db.DB_PATH = str(Path(self.temp.name) / 'academy.db')
-        db.init_db()
+from mysql_fixture import MySQLTestCase
 
-    def tearDown(self):
-        db.DB_PATH = self.old_path
-        self.temp.cleanup()
 
+class Workflows(MySQLTestCase):
     def test_student_edit_preserves_relations_and_validates(self):
         db.update_student(1, '수정학생', '새학교', '고3', '2026-11-19', '', 'INACTIVE')
         row = db.list_students()[0]
@@ -36,17 +27,17 @@ class Workflows(unittest.TestCase):
         db.update_enrollment_status(1, 'COMPLETED')
         self.assertEqual(len(db.list_active_classes_by_student(1)), 0)
         with self.assertRaises(ValueError):
-            db.add_class_payment(1, 1, '')
+            db.add_class_payment(1, 1, '', billing_month='2026-11')
         self.assertEqual(len(db.list_payments(1)), 1)
         db.update_enrollment_status(1, 'ACTIVE')
-        db.add_class_payment(1, 1, '')
+        db.add_class_payment(1, 1, '', billing_month='2026-11')
         self.assertEqual(db.list_payments(1)[0]['payment_date'], date.today().isoformat())
         db.update_student_classification(1, 'BLACK')
         db.update_enrollment_status(1, 'CANCELED')
         with self.assertRaises(ValueError):
             db.update_enrollment_status(1, 'ACTIVE')
         with self.assertRaises(ValueError):
-            db.add_class_payment(1, 1, '')
+            db.add_class_payment(1, 1, '', billing_month='2026-11')
         with self.assertRaises(ValueError):
             db.update_enrollment_status(999, 'ACTIVE')
 
@@ -91,10 +82,10 @@ class Workflows(unittest.TestCase):
             db.add_enrollment(2, 1, '2026-13-01')
         db.add_enrollment(2, 1, '')
         self.assertEqual(db.list_enrollments()[-1]['enrolled_date'], date.today().isoformat())
-        original = [tuple(r) for r in db.list_timetable_by_class(1)]
+        original = db.list_timetable_by_class(1)
         with self.assertRaises(ValueError):
             db.save_timetable_by_class(1, {'MON': ('20:00', '19:00')})
-        self.assertEqual([tuple(r) for r in db.list_timetable_by_class(1)], original)
+        self.assertEqual(db.list_timetable_by_class(1), original)
         before = len(db.list_classes())
         with self.assertRaises(ValueError):
             db.add_short_course(1, None, '중2', '특강', '2026-12-31', '2026-12-01')
@@ -112,40 +103,17 @@ class Workflows(unittest.TestCase):
                              {1: 'COMPLETED', 2: 'CANCELED'})
             with self.assertRaisesRegex(ValueError, '종료된 특강'):
                 db.add_enrollment(3, class_id, '')
-        conn = db.get_conn()
-        try:
-            self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
-            self.assertEqual(conn.execute('PRAGMA foreign_key_check').fetchall(), [])
-        finally:
-            conn.close()
+        self.assertEqual(db.list_timetable_by_class(1)[0]["start_time"], "18:00")
 
-    def test_old_database_migration(self):
-        # 최초 개발 브랜치의 양수 제약 DB를 별도 파일에서 검사한다.
-        import subprocess
-        old_schema = subprocess.check_output(['git', 'show', 'ecda2f1:schema_sqlite.sql'], text=True)
-        legacy = str(Path(self.temp.name) / 'legacy.db')
-        conn = sqlite3.connect(legacy)
-        conn.executescript(old_schema)
-        old_seed = subprocess.check_output(['git', 'show', 'ecda2f1:seed.sql'], text=True)
-        conn.executescript(old_seed)
-        conn.close()
-        db.DB_PATH = legacy
-        db.init_db()
-        db.update_course(1, '무료', 0)
-        db.add_class_payment(1, 1, '2026-11-19', billing_month='2026-11')
-        self.assertEqual(db.total_revenue(), 1400000)
-        conn = db.get_conn()
-        self.assertEqual(conn.execute('PRAGMA foreign_key_check').fetchall(), [])
-        self.assertEqual(len(db.list_classes()), 5)
-        self.assertEqual(db.list_classes()[0]['grade'], '중2')
-        self.assertEqual(db.list_students()[0]['grade'], '중2')
-        self.assertIsNone(db.list_students()[-1]['grade'])
-        self.assertEqual(tuple(conn.execute("SELECT record_id, original_grade FROM legacy_grade").fetchone()), (6, '3'))
-        self.assertTrue(all(row['status'] == 'PAID' for row in db.list_payments()))
-        self.assertEqual(sum(row['billing_month'] is None for row in db.list_payments()), 5)
-        conn.close()
-        db.init_db()
-        self.assertEqual(len(db.list_payments()), 6)
+    def test_student_delete_respects_enrollment(self):
+        from mysql.connector import IntegrityError
+
+        student_id = db.add_student("삭제할 학생", None, None, None, None)
+        db.update_student(student_id, "삭제할 학생", None, None, None, None, "ACTIVE")
+        db.delete_mysql_student(student_id)
+        self.assertNotIn(student_id, {row["student_id"] for row in db.list_students()})
+        with self.assertRaises(IntegrityError):
+            db.delete_mysql_student(1)
 
 
 if __name__ == '__main__':

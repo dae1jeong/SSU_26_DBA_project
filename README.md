@@ -1,14 +1,23 @@
 # SSU_26_DBA_project — 중고등 수학학원 관리 시스템
 
 숭실대학교 데이터베이스응용(2026-2) 팀 프로젝트.
-응용프로그램 + 데이터베이스(SQLite)를 통합한 학원 관리 시스템.
+응용프로그램 + 데이터베이스(MySQL)를 통합한 학원 관리 시스템.
 
 ## 기술 스택
-- **언어:** Python 3 (표준 라이브러리만 사용 — 별도 설치 불필요)
-- **데이터베이스:** SQLite (`academy.db` 단일 파일)
+- **언어:** Python 3, MySQL Connector/Python
+- **데이터베이스:** MySQL (`math_academy`)
 - **GUI:** Tkinter (Python 기본 내장)
 
-> 외부 Python 패키지는 필요하지 않지만 GUI 실행에는 정상 작동하는 Tkinter/Tk가 필요합니다. 이 Mac에서는 Homebrew Python 3.14 / Tk 9.1로 창 표시를 확인했습니다. macOS 기본 Python 3.9 / Tk 8.5와 실행 환경이 다릅니다.
+## MySQL 연결 준비
+
+MySQL 서버의 새 데이터베이스에 [v6 스키마](sql/mysql/academy_physical_model_v6.sql)를 한 번 실행합니다. 학생을 비롯한 업무 데이터는 별도 이관으로 입력합니다.
+
+```bash
+python3 -m pip install -r requirements.txt
+export ACADEMY_MYSQL_USER=계정이름
+```
+
+`ACADEMY_MYSQL_PASSWORD`에 MySQL 비밀번호를 설정합니다. 환경 변수 `ACADEMY_MYSQL_HOST`, `ACADEMY_MYSQL_PORT`, `ACADEMY_MYSQL_DATABASE`의 기본값은 각각 `127.0.0.1`, `3306`, `math_academy`입니다. 웹과 Tkinter 앱은 같은 접속 설정을 사용합니다.
 
 ## 웹 화면 실행 (권장)
 
@@ -19,19 +28,14 @@ python3 web_app.py
 서버가 시작되면 기본 브라우저에서 **http://127.0.0.1:8000** 을 자동으로 엽니다.
 터미널은 실행 중인 상태로 유지하고, 종료는 Ctrl+C입니다.
 브라우저를 자동으로 열지 않으려면 `python3 web_app.py --no-browser`를 사용하세요.
-기존 `academy.db`와 `db.py`를 그대로 사용합니다. 웹 화면에는 Tkinter가 필요하지 않으므로
-이 Mac의 기본 `python3`로 실행할 수 있습니다(Python 3.9 이상).
-
 - 운영 현황, 학생, 선생님, 수강 과정, 반, 수강, 결제 메뉴 제공.
 - 목록 검색, 등록·수정 팝업, 수강 상태 변경, 학생별 수강 내역과 합계 제공.
 - 반별 명단·주간 시간표·특강 개설, 학생·기간별 결제 조회·수납 합계 제공.
 - 모바일에서는 상단 가로 메뉴와 단일 열 폼으로 변경. 넓은 표는 표 내부에서 가로 스크롤.
 - HTML·CSS·JavaScript 정적 파일은 `web/`, 웹 서버·API 연결은 `web_app.py`.
-- 별도 패키지나 빌드 도구가 필요하지 않으며 외부 폰트·CDN을 사용하지 않습니다.
+- 웹 화면은 빌드 도구와 외부 폰트·CDN 없이 실행됩니다.
 
 포트가 사용 중이면 `python3 web_app.py --port 8001`로 실행합니다.
-실제 DB와 분리된 시연은 `python3 web_app.py --db /tmp/academy_demo.db --port 8001`로 실행합니다.
-존재하지 않는 DB 파일을 지정하면 샘플 데이터를 생성합니다.
 
 현재 서버는 **이 PC의 loopback에만 연결**하며 사용자 로그인·역할 권한은 구현하지 않았습니다.
 외부 서버 배포는 교수님 요구사항 확인 후 별도 설계 대상입니다.
@@ -42,26 +46,17 @@ python3 web_app.py
 /opt/homebrew/bin/python3.14 app.py
 ```
 
-기존 앱도 유지됩니다. 웹과 같은 `academy.db`를 사용합니다.
-DB가 없으면 `schema_sqlite.sql`과 `seed.sql`로 자동 생성합니다.
+Tkinter 앱도 웹과 같은 MySQL 데이터베이스를 사용합니다.
 
 ## 파일 구성
 | 파일 | 설명 |
 |---|---|
 | `app.py` | Tkinter GUI (프론트엔드) |
 | `db.py` | DB 연결 + CRUD 함수 (백엔드) |
-| `schema_sqlite.sql` | 테이블 생성 스크립트 (SQLite용) |
-| `seed.sql` | 시연용 샘플 데이터 |
-| `academy.db` | 통합 데이터베이스 파일 (실행 시 생성) |
+| `sql/mysql/academy_physical_model_v6.sql` | MySQL v6 스키마 |
 
 ## 데이터 모델 (8개 테이블)
 student · enrollment · class · course · teacher · timetable · short_course · payment
-
-- 물리 모델 원본은 **MySQL 기준**으로 설계되었고, 배포/실행용으로 **SQLite로 변환**했습니다.
-  - `ENUM` → `CHECK(col IN (...))`
-  - `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`
-  - `INT UNSIGNED` → `INTEGER + CHECK(정수, >= 0)`
-  - `DATE/TIME` → `TEXT` ('YYYY-MM-DD' / 'HH:MM')
 
 ## 구현된 기능 (초안)
 - 학생 등록 / 목록 / 분류(ACTIVE·INACTIVE·BLACK)
@@ -97,7 +92,7 @@ student · enrollment · class · course · teacher · timetable · short_course
 
 - 과정 목록에서 선택 후 하단 `수정` 버튼으로 과정명·수강비를 변경하고 저장 또는 취소.
 - 과정 등록·수정 시 빈 과정명과 음수·소수·문자·빈 금액을 차단. 수강비는 0 이상의 정수만 허용.
-- 기존 DB는 앱 시작 시 금액 제약을 자동 변경하며 과정 ID, 반 연결과 기존 결제 내역을 보존. 변경된 수강비는 이후 결제에 적용되며 0원 결제도 지원.
+- 변경된 수강비는 이후 결제에 적용되며 0원 결제도 지원.
 
 #### 선생님 목록 및 반 정보 수정
 
@@ -105,7 +100,7 @@ student · enrollment · class · course · teacher · timetable · short_course
 - 상단 `선생님 관리` 탭에서 ID·이름·연락처를 조회하고, `선생님 정보 수정`에서 이름과 연락처 변경. 이름은 필수이며 빈 연락처는 NULL로 저장.
 - 반 목록 아래 `반 정보 수정`에서 반 이름·학년·선생님 변경. 과정은 읽기 전용이며 특강 기간과 수강 학생·시간표는 유지.
 - 반 생성·수정의 선생님 선택 목록에 `NULL (미지정)` 제공. 동명이인은 ID로 구분하며 미지정 선택 시 실제 DB NULL 저장.
-- 반 수정 시 빈 반 이름과 잘못된 학년 입력 차단. 학년은 양의 정수 또는 빈 값(미지정) 허용.
+- 반 수정 시 빈 반 이름과 잘못된 학년 입력 차단. 학년은 초1~초6, 중1~중3, 고1~고3 또는 미지정.
 
 ## dev_daejeong 기능 완성 작업
 
@@ -116,34 +111,25 @@ student · enrollment · class · course · teacher · timetable · short_course
 - 수강 등록 목록에서 **상태 변경**: ACTIVE / COMPLETED / CANCELED. 같은 학생·반의 중복 등록은 차단하며, 재수강은 기존 상태를 ACTIVE로 변경합니다. BLACK 학생과 종료된 특강은 활성화할 수 없습니다. 기존 수강 등록일 유지.
 - 결제 내역에서 **학생·시작일·종료일 필터**와 조회 결과 건수·수납 합계. 기간 경계 포함, 빈 조건은 제한 없음. 전체 보기로 조건 초기화.
 - 빈 수강 등록일·결제일은 실행 PC의 오늘 날짜 사용. 잘못된 날짜와 역순 조회 기간 차단.
-- 학생과 반의 학년은 초1~초6, 중1~중3, 고1~고3 또는 미지정입니다. 기존 숫자 학년은 학교명·반 이름으로 학교급을 확인할 수 있을 때 변환합니다. 나머지는 미지정으로 표시하고 기존 값을 SQLite의 `legacy_grade`에 보존합니다.
+- 학생과 반의 학년은 초1~초6, 중1~중3, 고1~고3 또는 미지정입니다.
 - 학생·선생님 연락처는 선택 입력입니다. 숫자만 입력해도 하이픈으로 정리해 저장합니다. 학생은 01x 휴대전화, 선생님은 국내 번호를 받습니다.
 - 특강 종료일 다음 날부터 앱 시작·수강 조회 시 ACTIVE 수강을 COMPLETED로 갱신합니다. 이미 취소된 수강은 취소 상태로 남습니다.
 - 결제 내역은 완납(PAID), 미납(UNPAID), 환불(REFUNDED) 상태를 표시합니다. 미납을 완납으로, 완납을 전액 환불로 기록할 수 있습니다. 수납 합계는 현재 완납 상태의 금액을 집계하며 환불 기록의 최초 결제일과 금액은 보존합니다.
 - 학생 분류 변경만으로 기존 수강을 자동 취소하지 않음. 수강 상태는 별도로 변경. 결제 이력은 보존.
-- 조회용 인덱스 `payment(student_id, payment_date)` 추가. 기존 DB에도 앱 초기화 시 적용.
+## 월별 청구
 
-## MySQL 설계 및 시연 데이터
-
-MySQL 8.0.16 이상에서 빈 시연 환경을 만든 뒤 [v5 스키마](sql/mysql/academy_physical_model_v5.sql)와 [MySQL 시연 데이터](sql/mysql/seed_mysql.sql)를 순서대로 한 번씩 실행합니다. 청구월과 실제 결제일이 다른 사례를 볼 수 있습니다. 자정마다 특강 수강을 정리하려면 시연 서버의 MySQL 이벤트 스케줄러가 활성화되어 있어야 합니다. [ERD와 학년 도메인](sql/mysql/erd.md)
-
-웹과 Tkinter 앱은 SQLite로 실행합니다. 결제 관리에서 **결제 대상**의 청구월을 선택하면 해당 월의 현재 수강 건과 미발행·미납·완납·환불 상태를 볼 수 있습니다. 미발행 대상은 목록에서 미납으로 등록하거나 결제 등록 화면에서 바로 완납으로 등록할 수 있습니다.
+결제 관리에서 **결제 대상**의 청구월을 선택하면 해당 월의 현재 수강 건과 미발행·미납·완납·환불 상태를 볼 수 있습니다. 미발행 대상은 목록에서 미납으로 등록하거나 결제 등록 화면에서 바로 완납으로 등록할 수 있습니다.
 - 수강 등록일이 선택한 달 말일까지이고 수강 상태가 ACTIVE이며, 학생이 BLACK이 아닌 경우가 대상입니다. 특강은 해당 월과 기간이 겹치고 아직 종료되지 않은 경우에 표시됩니다.
-- 같은 수강에서 같은 청구월의 청구는 한 번만 등록됩니다. 기존 결제의 미확인 청구월은 미지정으로 남겨 전체 내역에서 볼 수 있습니다.
+- 같은 수강에서 같은 청구월의 청구는 한 번만 등록됩니다.
 - 내역의 청구월 필터와 실제 결제일 필터는 각각 적용됩니다. 결제일 범위를 지정한 조회에는 결제일이 없는 미납 건이 포함되지 않습니다.
 
 ## 검증
 
+별도 MySQL 테스트 서버의 소켓을 지정하면 테스트마다 임시 스키마를 만들고 제거합니다. 테스트 계정에는 스키마 생성 및 삭제 권한이 필요합니다.
+
 ```bash
+export ACADEMY_MYSQL_TEST_SOCKET=/path/to/test/mysql.sock
 python3 -m unittest discover -s tests -v
 ```
 
-임시 DB에서 학생 수정과 연결 보존, 수강 상태·블랙리스트 차단, 기간 경계·집계,
-가격 변경 후 과거 결제 보존, 중복·날짜 오류, 시간표 실패 시 보존, 기존 DB 마이그레이션을 확인합니다.
-실제 `academy.db`는 검사 중 변경하지 않습니다.
-화면 디자인과 최종 시연 통합 검증은 후속 단계입니다.
-
-## 브랜치 전략
-- `main`: 팀 회의 후 확정본 반영
-- `dev_daejeong`: 박대정 개발
-- `dev_kyungha`: 이경하 개발
+테스트 계정은 `ACADEMY_MYSQL_TEST_USER`와 `ACADEMY_MYSQL_TEST_PASSWORD`로 설정합니다. 기본 계정은 `root`입니다.
