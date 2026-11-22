@@ -5,6 +5,7 @@ import os
 import secrets
 import threading
 import webbrowser
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
@@ -89,6 +90,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlsplit(self.path)
+        if url.path == '/healthz':
+            try:
+                with closing(db.get_conn()) as conn:
+                    conn.execute('SELECT student_id FROM student LIMIT 0')
+                return self.send(200, {'ok': True})
+            except Exception:
+                return self.send(503, {'ok': False})
         if url.path.startswith('/api/') and not self.is_authenticated():
             return self.send(401, {'error': '관리자 로그인이 필요합니다.'})
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
@@ -127,8 +135,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         # JSON + same-origin 검사를 통해 다른 사이트의 폼 요청을 차단한다.
         host = self.headers.get('Host', '')
-        allowed = {f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}'}
-        if host not in allowed or self.headers.get('Origin') not in (None, 'http://' + host):
+        configured = os.getenv('ACADEMY_ALLOWED_ORIGINS', '')
+        origins = {value.strip().rstrip('/') for value in configured.split(',') if value.strip()}
+        if not origins:
+            origins = {f'http://localhost:{self.server.server_port}', f'http://127.0.0.1:{self.server.server_port}'}
+        matching = {origin for origin in origins if urlsplit(origin).netloc == host}
+        if not matching or (self.headers.get('Origin') is not None and self.headers['Origin'] not in matching):
             return self.send(403, {'error': '허용되지 않은 요청입니다.'})
         if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.send(415, {'error': 'JSON 요청만 허용합니다.'})
@@ -169,13 +181,14 @@ def open_browser(url):
         print(f'브라우저를 자동으로 열지 못했습니다. 직접 접속하세요: {url}', flush=True)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
+    parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--no-browser', action='store_true', help='브라우저 자동 열기 생략')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     db.init_db()
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f'http://127.0.0.1:{server.server_port}'
     print(f'학원 관리 웹: {url}  (종료: Ctrl+C)', flush=True)
     try:
