@@ -114,7 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                                        'timetable': records(db.list_timetable_by_class(cid))})
             files = {'/': ('index.html', 'text/html; charset=utf-8'),
                      '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                     '/style.css': ('style.css', 'text/css; charset=utf-8')}
+                     '/style.css': ('style.css', 'text/css; charset=utf-8'),
+                     '/kya-logo.jpg': ('kya-logo.jpg', 'image/jpeg')}
             if url.path not in files:
                 return self.send(404, {'error': '페이지를 찾을 수 없습니다.'})
             name, mime = files[url.path]
