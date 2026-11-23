@@ -103,45 +103,40 @@ if(page==='teachers'){rows=state.teachers.map(r=>tr([r.teacher_id,esc(r.name),es
 if(page==='courses'){rows=state.courses.map(r=>tr([r.course_id,esc(r.name),money(r.fee),state.classes.filter(c=>c.course_id===r.course_id).length+'개',button('수정','course.edit',r.course_id)]));headers=['ID','과정명','수강비','개설 반','관리'];title='수강 과정 목록';count=state.courses.length}
 if(page==='classes'){rows=state.classes.map(r=>tr([r.class_id,`${esc(r.class_name)}<small>${r.start_date?'특강':'정규반'}</small>`,esc(r.course_name),esc(r.teacher_name)||'미지정',esc(r.grade)||'—',r.start_date?`${esc(r.start_date)} ~ ${esc(r.end_date)}`:'—',actions([button('명단','class.roster',r.class_id),button('시간표','class.schedule',r.class_id),button('수정','class.edit',r.class_id)])]));headers=['ID','반 이름','수강 과정','담당 선생님','학년','특강 기간','관리'];title='개설 반 목록';count=state.classes.length}
 if(page==='enrollments'){rows=state.enrollments.map(r=>tr([r.enrollment_id,esc(r.student_name),esc(r.class_name),esc(r.enrolled_date),badge(r.status),button('상태 변경','enrollment.edit',r.enrollment_id)]));headers=['ID','학생명','반 이름','등록일','수강 상태','관리'];title='수강 등록 목록';count=state.enrollments.length}
-return card(title,`총 ${count}건 · 목록에서 정보를 확인하고 관리하세요.`,`<div class="toolbar"><input type="search" class="search" id="search" placeholder="이름, 반, 과정 등으로 검색" aria-label="목록 검색"><span id="search-count">전체 ${count}건</span></div><div id="listing-table">${table(headers,rows)}</div><div id="listing-pagination"></div><div class="card-bottom">등록된 정보는 저장 즉시 다른 메뉴에도 반영됩니다.</div>`)}
+return card(title,`총 ${count}건 · 목록에서 정보를 확인하고 관리하세요.`,`<div class="toolbar"><input type="search" class="search" id="search" placeholder="이름, 반, 과정 등으로 검색" aria-label="목록 검색"><span id="search-count">전체 ${count}건</span></div><div id="listing-table">${table(headers,rows)}</div><div class="card-bottom">등록된 정보는 저장 즉시 다른 메뉴에도 반영됩니다.</div>`)}
 function mountListing() {
     $('#content').innerHTML = listing();
-    const search = $('#search');
-    const table = $('#listing-table table');
+    mountPagination($('#listing-table'), $('#search'), $('#search-count'));
+}
+function mountPagination(container, search, count) {
+    const table = container.querySelector('table');
     const body = table.tBodies[0];
     const emptyRow = body.querySelector('td.empty')?.parentElement;
     const rows = Array.from(body.rows).filter(row => row !== emptyRow);
-    const count = $('#search-count');
-    const controls = $('#listing-pagination');
-    const pageSize = 15;
-    const paginated = page === 'students' || page === 'classes';
+    const pageSize = 10;
     let currentPage = 1;
 
-    if (paginated) {
-        controls.className = 'listing-pagination';
-        controls.innerHTML = `<span id="listing-page-range" aria-live="polite"></span>
-            <div role="group" aria-label="목록 페이지">
-                <button type="button" data-page-step="-1">이전</button>
-                <span id="listing-page-number"></span>
-                <button type="button" data-page-step="1">다음</button>
-            </div>`;
-    }
+    const controls = document.createElement('div');
+    controls.className = 'listing-pagination';
+    controls.innerHTML = `<span data-page-range aria-live="polite"></span>
+        <div role="group" aria-label="목록 페이지">
+            <button type="button" data-page-step="-1">이전</button>
+            <span data-page-number></span>
+            <button type="button" data-page-step="1">다음</button>
+        </div>`;
+    table.parentElement.after(controls);
 
     function updateRows() {
-        const query = search.value.trim().toLowerCase();
-        const matches = rows.filter(row => row.textContent.toLowerCase().includes(query));
-        count.textContent = query ? `검색 결과 ${matches.length}건` : `전체 ${rows.length}건`;
-        if (!paginated) {
-            const matchingRows = new Set(matches);
-            rows.forEach(row => { row.hidden = !matchingRows.has(row); });
-            return;
-        }
+        const query = search?.value.trim().toLowerCase();
+        const matches = query ? rows.filter(row => row.textContent.toLowerCase().includes(query)) : rows;
+        if (count) count.textContent = query ? `검색 결과 ${matches.length}건` : `전체 ${rows.length}건`;
 
         const pageCount = Math.max(1, Math.ceil(matches.length / pageSize));
         currentPage = Math.min(Math.max(1, currentPage), pageCount);
         const start = (currentPage - 1) * pageSize;
+        const end = Math.min(start + pageSize, matches.length);
         if (matches.length) {
-            body.replaceChildren(...matches.slice(start, start + pageSize));
+            body.replaceChildren(...matches.slice(start, end));
         } else if (emptyRow) {
             body.replaceChildren(emptyRow);
         } else {
@@ -149,8 +144,8 @@ function mountListing() {
         }
         controls.hidden = pageCount === 1;
         if (pageCount > 1) {
-            $('#listing-page-range').textContent = `전체 ${matches.length}건 중 ${start + 1}–${Math.min(start + pageSize, matches.length)}건`;
-            $('#listing-page-number').textContent = `${currentPage} / ${pageCount}`;
+            controls.querySelector('[data-page-range]').textContent = `전체 ${matches.length}건 중 ${start + 1}–${end}건`;
+            controls.querySelector('[data-page-number]').textContent = `${currentPage} / ${pageCount}`;
             controls.querySelector('[data-page-step="-1"]').disabled = currentPage === 1;
             controls.querySelector('[data-page-step="1"]').disabled = currentPage === pageCount;
         }
@@ -161,16 +156,14 @@ function mountListing() {
         updateRows();
     }
 
-    if (paginated) {
-        paginatedTables.set(table, {rows, reset});
-        controls.addEventListener('click', event => {
-            const button = event.target.closest('[data-page-step]');
-            if (!button) return;
-            currentPage += Number(button.dataset.pageStep);
-            updateRows();
-        });
-    }
-    search.addEventListener('input', reset);
+    paginatedTables.set(table, {rows, reset});
+    controls.addEventListener('click', event => {
+        const button = event.target.closest('[data-page-step]');
+        if (!button) return;
+        currentPage += Number(button.dataset.pageStep);
+        updateRows();
+    });
+    search?.addEventListener('input', reset);
     updateRows();
 }
 async function render(){const token=++generation;page=location.hash.slice(1);if(!Object.hasOwn(routes,page))page='dashboard';$('#page-eyebrow').textContent=pageEyebrows[page];$('#title').textContent=routes[page][0];$('#subtitle').textContent=routes[page][1];document.title=routes[page][0]+' · Academy';document.querySelectorAll('[data-nav]').forEach(a=>{a.classList.toggle('active',a.dataset.nav===page);a.setAttribute('aria-current',a.dataset.nav===page?'page':'false')});$('#primary').hidden=!routes[page][2];$('#primary').textContent='+ '+(routes[page][2]||'');$('#content').innerHTML='<div class="empty">데이터를 불러오는 중입니다…</div>';
@@ -223,6 +216,7 @@ async function loadPaymentTargets(token=generation){
             money(row.billed_fee??row.fee), row.status?badge(row.status):'미발행',
             row.payment_id?'—':button('미납 등록','payment.issue',row.enrollment_id),
         ])),'해당 월의 결제 대상이 없습니다.');
+        mountPagination(target);
         target.onclick=event=>{
             const issue=event.target.closest('[data-action="payment.issue"]');
             if(!issue)return;
@@ -243,11 +237,13 @@ async function loadPayments(token=generation){
         const q=new URLSearchParams(new FormData($('#payment-filter')));
         const data=await api('/api/payments?'+q);
         if(token!==generation||request!==paymentRequest)return;
-        $('#payment-result').innerHTML=table(['ID','학생명','반','결제 과정','청구월','금액','결제일','상태','관리'],
+        const result=$('#payment-result');
+        result.innerHTML=table(['ID','학생명','반','결제 과정','청구월','금액','결제일','상태','관리'],
             data.rows.map(r=>tr([r.payment_id,esc(r.student_name),esc(r.class_name)||'—',esc(r.course_name),
                 esc(r.billing_month?.slice(0,7))||'미지정',money(r.course_fee),esc(r.payment_date)||'—',
                 badge(r.status),paymentAction(r)])))+
             `<div class="summary-strip"><span>조회 결과 ${data.rows.length}건 · 결제일 경계 포함</span><strong>수납 합계 ${money(data.total)}</strong></div>`;
+        mountPagination(result);
     }catch(e){
         if(token===generation&&request===paymentRequest)$('#payment-result').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div>`;
     }
