@@ -9,12 +9,13 @@ from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
-from mysql.connector import DataError, IntegrityError
+from mysql.connector import DataError, Error, IntegrityError
 
 import db
 
 WEB = Path(__file__).resolve().parent / 'web'
 LOGIN_TOKEN = secrets.token_urlsafe(32)
+READER_TOKEN = secrets.token_urlsafe(32)
 
 
 def records(rows):
@@ -73,9 +74,13 @@ def dispatch(action, data):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def is_authenticated(self):
-        supplied = self.headers.get('Authorization', '')
-        return secrets.compare_digest(supplied.encode(), f'Bearer {LOGIN_TOKEN}'.encode())
+    def request_role(self):
+        supplied = self.headers.get('Authorization', '').encode()
+        if secrets.compare_digest(supplied, f'Bearer {LOGIN_TOKEN}'.encode()):
+            return 'admin'
+        if secrets.compare_digest(supplied, f'Bearer {READER_TOKEN}'.encode()):
+            return 'reader'
+        return None
 
     def send(self, status, payload, mime='application/json; charset=utf-8'):
         body = json.dumps(payload, ensure_ascii=False).encode() if mime.startswith('application/json') else payload
@@ -97,9 +102,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {'ok': True})
             except Exception:
                 return self.send(503, {'ok': False})
-        if url.path.startswith('/api/') and not self.is_authenticated():
-            return self.send(401, {'error': '관리자 로그인이 필요합니다.'})
+        role = self.request_role()
+        if url.path.startswith('/api/') and role is None:
+            return self.send(401, {'error': '로그인이 필요합니다.'})
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
+        connection_role = db.read_only_request.set(role == 'reader')
         try:
             lists = {
                 '/api/students': db.list_student_summaries,
@@ -150,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, {'error': str(exc)})
         except Exception:
             self.send(500, {'error': '조회 중 오류가 발생했습니다.'})
+        finally:
+            db.read_only_request.reset(connection_role)
 
     def do_POST(self):
         # JSON + same-origin 검사를 통해 다른 사이트의 폼 요청을 차단한다.
@@ -164,8 +173,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.send(415, {'error': 'JSON 요청만 허용합니다.'})
         path = urlsplit(self.path).path
-        if path != '/api/login' and not self.is_authenticated():
-            return self.send(401, {'error': '관리자 로그인이 필요합니다.'})
+        role = self.request_role()
+        if path != '/api/login' and role is None:
+            return self.send(401, {'error': '로그인이 필요합니다.'})
+        connection_role = db.read_only_request.set(role == 'reader')
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 65536:
@@ -176,9 +187,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/login':
                 password = data.get('password')
                 expected = os.environ.get('ACADEMY_WEB_PASSWORD', 'admin')
-                if not isinstance(password, str) or not secrets.compare_digest(password.encode(), expected.encode()):
-                    return self.send(401, {'error': '관리자 비밀번호가 올바르지 않습니다.'})
-                return self.send(200, {'token': LOGIN_TOKEN})
+                reader_password = os.getenv('ACADEMY_WEB_READER_PASSWORD')
+                if isinstance(password, str):
+                    if secrets.compare_digest(password.encode(), expected.encode()):
+                        return self.send(200, {'token': LOGIN_TOKEN})
+                    if (reader_password and os.getenv('ACADEMY_MYSQL_READER_PASSWORD')
+                            and secrets.compare_digest(password.encode(), reader_password.encode())):
+                        return self.send(200, {'token': READER_TOKEN})
+                return self.send(401, {'error': '비밀번호가 올바르지 않습니다.'})
             dispatch(path.removeprefix('/api/'), data)
             self.send(200, {'ok': True})
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
@@ -186,8 +202,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send(400, {'error': str(exc) or '입력값을 확인하세요.'})
         except (DataError, IntegrityError):
             self.send(400, {'error': '연결된 항목이나 중복 등록을 확인하세요.'})
+        except Error as exc:
+            if role == 'reader' and exc.errno == 1142:
+                self.send(403, {'error': f'{exc.errno} {exc.msg}'})
+            else:
+                self.send(500, {'error': '저장 중 오류가 발생했습니다. 다시 시도하세요.'})
         except Exception:
             self.send(500, {'error': '저장 중 오류가 발생했습니다. 다시 시도하세요.'})
+        finally:
+            db.read_only_request.reset(connection_role)
 
 
 def open_browser(url):

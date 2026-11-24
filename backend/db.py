@@ -6,6 +6,7 @@ import os
 import re
 from calendar import monthrange
 from contextlib import closing
+from contextvars import ContextVar
 from datetime import date, timedelta
 
 GRADE_LEVELS = tuple(f"{level}{grade}" for level, count in (("초", 6), ("중", 3), ("고", 3))
@@ -13,12 +14,20 @@ GRADE_LEVELS = tuple(f"{level}{grade}" for level, count in (("초", 6), ("중", 
 PAYMENT_TRANSITIONS = {"UNPAID": "PAID", "PAID": "REFUNDED"}
 
 
+read_only_request = ContextVar("read_only_request", default=False)
+
+
 def get_mysql_conn():
     """프로젝트 환경 변수로 MySQL v6 데이터베이스에 연결한다."""
     from mysql.connector import connect
     from mysql.connector.constants import ClientFlag
 
-    user = os.getenv("ACADEMY_MYSQL_USER")
+    if read_only_request.get():
+        user = "academy_reader"
+        password = os.environ["ACADEMY_MYSQL_READER_PASSWORD"]
+    else:
+        user = os.getenv("ACADEMY_MYSQL_USER")
+        password = os.getenv("ACADEMY_MYSQL_PASSWORD", "")
     if not user:
         raise ValueError("ACADEMY_MYSQL_USER에 MySQL 계정을 설정하세요.")
     return connect(
@@ -26,7 +35,7 @@ def get_mysql_conn():
         port=int(os.getenv("ACADEMY_MYSQL_PORT", "3306")),
         database=os.getenv("ACADEMY_MYSQL_DATABASE", "math_academy"),
         user=user,
-        password=os.getenv("ACADEMY_MYSQL_PASSWORD", ""),
+        password=password,
         connection_timeout=5,
         client_flags=[ClientFlag.FOUND_ROWS],
     )
@@ -97,6 +106,9 @@ def init_db():
 
 def sync_expired_short_courses():
     """종료일 다음 날부터 진행 중인 특강 수강을 수료 처리한다."""
+    if read_only_request.get():
+        # 조회 세션에서는 MySQL의 일일 이벤트가 수료 처리를 맡는다.
+        return
     conn = get_conn()
     try:
         with conn:
