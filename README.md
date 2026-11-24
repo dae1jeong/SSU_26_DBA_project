@@ -133,3 +133,28 @@ python3 -m unittest discover -s tests -v
 ```
 
 테스트 계정은 `ACADEMY_MYSQL_TEST_USER`와 `ACADEMY_MYSQL_TEST_PASSWORD`로 설정합니다. 기본 계정은 `root`입니다.
+# Docker 웹 화면의 조회 API
+
+Docker 배포는 `backend/web/app.js`, `backend/web_app.py`, `backend/db.py`를 사용합니다.
+각 메뉴는 해당 목록만 요청하며, 저장 후에도 현재 메뉴만 다시 조회합니다.
+
+| 화면 | GET 요청 | 반환 데이터 |
+| --- | --- | --- |
+| 학생 | `/api/students` | ID, 이름, 학교, 학년, 연락처, 분류 |
+| 선생님 | `/api/teachers` | ID, 이름, 연락처, 담당 반 이름 목록 |
+| 과정 | `/api/courses` | ID, 이름, 수강비, 개설 반 개수 |
+| 반 | `/api/classes` | 표 표시 정보 및 수정에 필요한 과정·선생님 ID |
+| 수강 | `/api/enrollments` | ID, 학생명, 반 이름, 등록일, 상태 |
+| 운영 현황 | `/api/dashboard` | 집계 수치, 최근 학생 5명, 최근 완납 결제 5건 |
+
+- 학생 수정 창은 `/api/student-detail?id=...`에서 등록일을 포함한 상세 정보를 조회합니다.
+- 등록·수정 창의 선택 목록은 `/api/options?kind=students|teachers|courses|classes`로 필요할 때 조회합니다. `kind`는 하나씩 지정합니다.
+- 학생·반 화면의 학년 표시 순서와 입력 선택지는 `/api/grade-levels`를 사용합니다.
+- 결제 화면은 학생 선택 목록과 기존 결제 대상·내역 API를 사용합니다.
+- `/api/state`는 호환성을 위해 남겨 두지만 Docker 웹 화면에서는 호출하지 않습니다.
+- 목록 검색·정렬·10개씩 보기는 기존처럼 브라우저에서 처리합니다. 메뉴별 목록은 전체 행을 받으며, 서버 페이지네이션은 적용하지 않았습니다.
+- 모든 위 API에는 로그인 토큰을 담은 `Authorization: Bearer ...` 헤더가 필요합니다.
+
+변경 적용: `docker compose up -d --build backend`
+
+화면 요청 회귀 테스트: `node --test tests/test_page_requests.cjs`

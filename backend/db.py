@@ -125,6 +125,71 @@ def add_student(name, school, grade, day_of_admission, contact_number, classific
     )
 
 
+def list_student_summaries():
+    with closing(get_conn()) as conn:
+        return conn.execute("""SELECT student_id, name, school, grade,
+            contact_number, student_classification FROM student ORDER BY student_id""").fetchall()
+
+
+def get_student(student_id):
+    with closing(get_conn()) as conn:
+        return conn.execute("""SELECT student_id, name, school, grade, day_of_admission,
+            contact_number, student_classification FROM student WHERE student_id = %s""",
+            (student_id,)).fetchone()
+
+
+def list_options(kind):
+    queries = {
+        'students': 'SELECT student_id, name, student_classification FROM student ORDER BY student_id',
+        'teachers': 'SELECT teacher_id, name FROM teacher ORDER BY teacher_id',
+        'courses': 'SELECT course_id, name FROM course ORDER BY course_id',
+        'classes': 'SELECT class_id, class_name FROM class ORDER BY class_id',
+    }
+    if kind not in queries:
+        raise ValueError('지원하지 않는 선택 목록입니다.')
+    with closing(get_conn()) as conn:
+        return conn.execute(queries[kind]).fetchall()
+
+
+def list_teacher_summaries():
+    with closing(get_conn()) as conn:
+        teachers = conn.execute('SELECT teacher_id, name, contact_number FROM teacher ORDER BY teacher_id').fetchall()
+        classes = conn.execute('SELECT teacher_id, class_name FROM class WHERE teacher_id IS NOT NULL ORDER BY class_id').fetchall()
+    names = {}
+    for row in classes:
+        names.setdefault(row['teacher_id'], []).append(row['class_name'])
+    return [dict(row, class_names=names.get(row['teacher_id'], [])) for row in teachers]
+
+
+def list_course_summaries():
+    with closing(get_conn()) as conn:
+        return conn.execute('''SELECT co.course_id, co.name, co.fee,
+            (SELECT COUNT(*) FROM class c WHERE c.course_id = co.course_id) AS class_count
+            FROM course co ORDER BY co.course_id''').fetchall()
+
+
+def dashboard_summary():
+    sync_expired_short_courses()
+    with closing(get_conn()) as conn:
+        counts = conn.execute("""SELECT
+            (SELECT COUNT(*) FROM student) AS students,
+            (SELECT COUNT(*) FROM student WHERE student_classification = 'ACTIVE') AS active_students,
+            (SELECT COUNT(*) FROM class) AS classes,
+            (SELECT COUNT(*) FROM short_course) AS short_classes,
+            (SELECT COUNT(*) FROM enrollment WHERE status = 'ACTIVE') AS active_enrollments,
+            (SELECT COUNT(*) FROM payment) AS payments,
+            (SELECT COALESCE(SUM(course_fee), 0) FROM payment WHERE status = 'PAID') AS total""").fetchone()
+        students = conn.execute('''SELECT student_id, name, school, student_classification
+            FROM student ORDER BY student_id DESC LIMIT 5''').fetchall()
+        payments = conn.execute("""SELECT s.name AS student_name, p.course_name,
+            p.course_fee, p.payment_date FROM payment p
+            JOIN enrollment e ON p.enrollment_id = e.enrollment_id
+            JOIN student s ON e.student_id = s.student_id WHERE p.status = 'PAID'
+            ORDER BY p.payment_date DESC, p.payment_id DESC LIMIT 5""").fetchall()
+    counts['total'] = int(counts['total'])
+    return dict(counts=counts, students=students, payments=payments)
+
+
 def list_students():
     with closing(get_conn()) as conn:
         return conn.execute(

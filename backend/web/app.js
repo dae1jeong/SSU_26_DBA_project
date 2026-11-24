@@ -105,8 +105,8 @@ const card=(title,sub,body)=>`<div class="card"><div class="card-head"><div><h2>
 function studentRows(rows){return rows.map(r=>tr([`<span class="badge">${r.student_id}</span>`,esc(r.name),esc(r.school)||'—',esc(r.grade)||'—',esc(r.contact_number)||'—',badge(r.student_classification,true),actions([button('수강 내역','student.history',r.student_id),button('수정','student.edit',r.student_id)])]))}
 function listing(){let rows,headers,title,count;
 if(page==='students'){rows=studentRows(state.students);headers=['ID','학생명','학교','학년','연락처','상태','관리'];title='전체 학생';count=state.students.length}
-if(page==='teachers'){rows=state.teachers.map(r=>tr([r.teacher_id,esc(r.name),esc(r.contact_number)||'—',esc(state.classes.filter(c=>c.teacher_id===r.teacher_id).map(c=>c.class_name).join(', '))||'미배정',button('수정','teacher.edit',r.teacher_id)]));headers=['ID','선생님','연락처','담당 반','관리'];title='선생님 목록';count=state.teachers.length}
-if(page==='courses'){rows=state.courses.map(r=>tr([r.course_id,esc(r.name),money(r.fee),state.classes.filter(c=>c.course_id===r.course_id).length+'개',button('수정','course.edit',r.course_id)]));headers=['ID','과정명','수강비','개설 반','관리'];title='수강 과정 목록';count=state.courses.length}
+if(page==='teachers'){rows=state.teachers.map(r=>tr([r.teacher_id,esc(r.name),esc(r.contact_number)||'—',esc(r.class_names.join(', '))||'미배정',button('수정','teacher.edit',r.teacher_id)]));headers=['ID','선생님','연락처','담당 반','관리'];title='선생님 목록';count=state.teachers.length}
+if(page==='courses'){rows=state.courses.map(r=>tr([r.course_id,esc(r.name),money(r.fee),r.class_count+'개',button('수정','course.edit',r.course_id)]));headers=['ID','과정명','수강비','개설 반','관리'];title='수강 과정 목록';count=state.courses.length}
 if(page==='classes'){rows=state.classes.map(r=>tr([r.class_id,`${esc(r.class_name)}<small>${r.start_date?'특강':'정규반'}</small>`,esc(r.course_name),esc(r.teacher_name)||'미지정',esc(r.grade)||'—',r.start_date?`${esc(r.start_date)} ~ ${esc(r.end_date)}`:'—',actions([button('명단','class.roster',r.class_id),button('시간표','class.schedule',r.class_id),button('수정','class.edit',r.class_id)])]));headers=['ID','반 이름','수강 과정','담당 선생님','학년','특강 기간','관리'];title='개설 반 목록';count=state.classes.length}
 if(page==='enrollments'){rows=state.enrollments.map(r=>tr([r.enrollment_id,esc(r.student_name),esc(r.class_name),esc(r.enrolled_date),badge(r.status),button('상태 변경','enrollment.edit',r.enrollment_id)]));headers=['ID','학생명','반 이름','등록일','수강 상태','관리'];title='수강 등록 목록';count=state.enrollments.length}
 return card(title,`총 ${count}건 · 목록에서 정보를 확인하고 관리하세요.`,`<div class="toolbar"><input type="search" class="search" id="search" placeholder="이름, 반, 과정 등으로 검색" aria-label="목록 검색"><span id="search-count">전체 ${count}건</span></div><div id="listing-table">${table(headers,rows)}</div><div class="card-bottom">등록된 정보는 저장 즉시 다른 메뉴에도 반영됩니다.</div>`)}
@@ -173,9 +173,36 @@ function mountPagination(container, search, count) {
     updateRows();
 }
 async function render(){const token=++generation;page=location.hash.slice(1);if(!Object.hasOwn(routes,page))page='dashboard';$('#page-eyebrow').textContent=pageEyebrows[page];$('#title').textContent=routes[page][0];$('#subtitle').textContent=routes[page][1];document.title=routes[page][0]+' · Academy';document.querySelectorAll('[data-nav]').forEach(a=>{a.classList.toggle('active',a.dataset.nav===page);a.setAttribute('aria-current',a.dataset.nav===page?'page':'false')});$('#primary').hidden=!routes[page][2];$('#primary').textContent='+ '+(routes[page][2]||'');$('#content').innerHTML='<div class="empty">데이터를 불러오는 중입니다…</div>';
-try{state=await api('/api/state');if(token!==generation)return;if(page==='dashboard'){const pay=await api('/api/payments');if(token!==generation)return;dashboard(pay)}else if(page==='payments'){await payments(token)}else{mountListing()}}catch(e){if(token===generation)$('#content').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div><button data-action="retry">다시 시도</button>`}}
-function dashboard(pay){const active=state.students.filter(s=>s.student_classification==='ACTIVE').length;const tiles=[['전체 학생',state.students.length,'명',`활성 학생 ${active}명`,'♙'],['운영 중인 반',state.classes.length,'개',`정규 ${state.classes.filter(c=>!c.start_date).length} · 특강 ${state.classes.filter(c=>c.start_date).length}`,'▦'],['수강 중인 등록',state.enrollments.filter(e=>e.status==='ACTIVE').length,'건','현재 ACTIVE 수강 기준','≡'],['누적 수납',Number(pay.total).toLocaleString('ko-KR'),'원',`전체 결제 ${pay.rows.length}건`,'₩']];
-$('#content').innerHTML=`<div class="stats">${tiles.map(t=>`<div class="stat"><div class="stat-top">${t[0]}<span class="stat-symbol">${t[4]}</span></div><strong>${t[1]}<small>${t[2]}</small></strong><p>${t[3]}</p></div>`).join('')}</div><div class="grid-two">${card('최근 등록 학생','최근 등록된 학생 5명을 확인하세요.',table(['ID','학생명','학교','상태'],state.students.slice(-5).reverse().map(s=>tr([s.student_id,esc(s.name),esc(s.school)||'—',badge(s.student_classification,true)]))))}${card('최근 결제 내역','결제일 기준 최근 수납 내역입니다.',table(['학생명','수강 과정','금액','결제일'],pay.rows.filter(r=>r.status==='PAID').slice(0,5).map(r=>tr([esc(r.student_name),esc(r.course_name),money(r.course_fee),esc(r.payment_date)]))))}</div><p class="section-label">자주 사용하는 업무</p><div class="quick-links"><a href="#students">학생 정보 관리 <span>↗</span></a><a href="#classes">반 · 시간표 관리 <span>↗</span></a><a href="#enrollments">수강 등록 및 상태 변경 <span>↗</span></a><a href="#payments">결제 등록 · 수납 조회 <span>↗</span></a></div>`;
+
+try {
+    const currentPage = page;
+    $('#primary').disabled = true;
+    if (currentPage === 'dashboard') {
+        const data = await api('/api/dashboard');
+        if (token !== generation) return;
+        state = {};
+        dashboard(data);
+    } else if (currentPage === 'payments') {
+        const students = await api('/api/options?kind=students');
+        if (token !== generation) return;
+        state = {students};
+        await payments(token);
+    } else {
+        const [rows, grades] = await Promise.all([
+            api('/api/' + currentPage),
+            ['students', 'classes'].includes(currentPage) ? api('/api/grade-levels') : Promise.resolve([]),
+        ]);
+        if (token !== generation) return;
+        state = {[currentPage]: rows, grade_levels: grades};
+        mountListing();
+    }
+    if (token === generation) $('#primary').disabled = false;
+} catch(e) {
+    if(token===generation) $('#content').innerHTML=`<div class="error" role="alert">${esc(e.message)}</div><button data-action="retry">다시 시도</button>`;
+}
+}
+function dashboard(data){const c=data.counts;const tiles=[['전체 학생',c.students,'명',`활성 학생 ${c.active_students}명`,'♙'],['운영 중인 반',c.classes,'개',`정규 ${c.classes-c.short_classes} · 특강 ${c.short_classes}`,'▦'],['수강 중인 등록',c.active_enrollments,'건','현재 ACTIVE 수강 기준','≡'],['누적 수납',Number(c.total).toLocaleString('ko-KR'),'원',`전체 결제 ${c.payments}건`,'₩']];
+$('#content').innerHTML=`<div class="stats">${tiles.map(t=>`<div class="stat"><div class="stat-top">${t[0]}<span class="stat-symbol">${t[4]}</span></div><strong>${t[1]}<small>${t[2]}</small></strong><p>${t[3]}</p></div>`).join('')}</div><div class="grid-two">${card('최근 등록 학생','최근 등록된 학생 5명을 확인하세요.',table(['ID','학생명','학교','상태'],data.students.map(s=>tr([s.student_id,esc(s.name),esc(s.school)||'—',badge(s.student_classification,true)]))))}${card('최근 결제 내역','결제일 기준 최근 수납 내역입니다.',table(['학생명','수강 과정','금액','결제일'],data.payments.map(r=>tr([esc(r.student_name),esc(r.course_name),money(r.course_fee),esc(r.payment_date)]))))}</div><p class="section-label">자주 사용하는 업무</p><div class="quick-links"><a href="#students">학생 정보 관리 <span>↗</span></a><a href="#classes">반 · 시간표 관리 <span>↗</span></a><a href="#enrollments">수강 등록 및 상태 변경 <span>↗</span></a><a href="#payments">결제 등록 · 수납 조회 <span>↗</span></a></div>`;
 }
 const opts=(rows,idKey,nameKey,selected='',blank='선택하세요')=>`<option value="">${blank}</option>`+rows.map(r=>`<option value="${r[idKey]}" ${String(r[idKey])===String(selected)?'selected':''}>${esc(r[nameKey])} (ID: ${r[idKey]})</option>`).join('');
 async function payments(token){
@@ -332,8 +359,23 @@ function paymentStatusEditor(id,status){
 async function studentHistory(id){const r=state.students.find(s=>s.student_id===id),d=await api('/api/student?id='+id);const total=d.enrollments.filter(e=>e.status==='ACTIVE').reduce((n,e)=>n+e.fee,0);openDialog(`${r.name} · 수강 내역`, `<div class="note">학생 ID ${id} · 모든 수강 상태를 표시합니다.<br>현재 수강비 합계 <b>${money(total)}</b> · 수강 중인 반의 현재 가격 기준이며 납부액이 아닙니다.</div>`+table(['반 이름','과정','현재 수강비','등록일','상태'],d.enrollments.map(e=>tr([esc(e.class_name),esc(e.course_name),money(e.fee),esc(e.enrolled_date),badge(e.status)]))))}
 async function classRoster(id){const r=state.classes.find(c=>c.class_id===id),d=await api('/api/class?id='+id);openDialog(`${r.class_name} · 학생 명단`,`<p class="note">총 ${d.students.length}명 · 수료·취소 상태를 포함합니다.</p>`+table(['학생 ID','이름','학교','수강 상태'],d.students.map(s=>tr([s.student_id,esc(s.name),esc(s.school)||'—',badge(s.status)]))))}
 async function scheduleEditor(id){const r=state.classes.find(c=>c.class_id===id),d=await api('/api/class?id='+id),days=['MON','TUE','WED','THU','FRI','SAT','SUN'],names=['월요일','화요일','수요일','목요일','금요일','토요일','일요일'];openDialog(`${r.class_name} · 주간 시간표`,`<p class="note">${esc(r.course_name)} · 담당 ${esc(r.teacher_name)||'미지정'}<br>체크한 요일만 저장합니다. 체크를 해제하면 해당 요일의 수업이 삭제됩니다.</p><form id="schedule-form">${days.map((day,i)=>{const t=d.timetable.find(t=>t.day_of_class===day);return `<div class="schedule"><label><input type="checkbox" name="${day}" ${t?'checked':''}>${names[i]}</label><input aria-label="${names[i]} 시작 시간" type="time" id="${day}-start" value="${t?.start_time||''}" ${t?'required':'disabled'}><input aria-label="${names[i]} 종료 시간" type="time" id="${day}-end" value="${t?.end_time||''}" ${t?'required':'disabled'}></div>`}).join('')}<p class="note">종료 시간은 시작 시간 이후여야 합니다. 자정을 넘기는 수업은 지원하지 않습니다.</p><div id="form-error" role="alert"></div><div class="form-actions"><button type="button" id="cancel">취소</button><button class="primary" id="save">시간표 저장</button></div></form>`);$('#cancel').onclick=()=>$('#dialog').close();days.forEach(day=>{$(`[name=${day}]`).onchange=e=>{for(const key of ['start','end']){const input=$(`#${day}-${key}`);input.disabled=!e.target.checked;input.required=e.target.checked}}});$('#schedule-form').onsubmit=async e=>{e.preventDefault();const schedule={};days.forEach(day=>{if($(`[name=${day}]`).checked)schedule[day]=[$(`#${day}-start`).value,$(`#${day}-end`).value]});$('#save').disabled=true;try{await api('/api/timetable.save',{class_id:id,schedule});$('#dialog').close();toast('시간표가 저장되었습니다.')}catch(err){$('#form-error').innerHTML=`<div class="error">${esc(err.message)}</div>`;$('#save').disabled=false}}}
-$('#primary').onclick=()=>({students:studentEditor,teachers:teacherEditor,courses:courseEditor,classes:classEditor,enrollments:enrollmentEditor,payments:paymentEditor}[page]?.());
-document.addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const id=Number(b.dataset.id);try{switch(b.dataset.action){case 'retry':await render();break;case 'student.edit':studentEditor(state.students.find(r=>r.student_id===id));break;case 'student.history':await studentHistory(id);break;case 'teacher.edit':teacherEditor(state.teachers.find(r=>r.teacher_id===id));break;case 'course.edit':courseEditor(state.courses.find(r=>r.course_id===id));break;case 'class.edit':classEditor(state.classes.find(r=>r.class_id===id));break;case 'class.roster':await classRoster(id);break;case 'class.schedule':await scheduleEditor(id);break;case 'enrollment.edit':enrollmentStatus(state.enrollments.find(r=>r.enrollment_id===id));break;case 'payment.paid':paymentStatusEditor(id,'PAID');break;case 'payment.refund':paymentStatusEditor(id,'REFUNDED');break}}catch(err){toast(err.message)}});
+let editorRequest = 0;
+async function prepareEditor(kind, row={}) {
+    const request = ++editorRequest, token = generation;
+    try {
+        const required = {classes:['courses','teachers'], enrollments:['students','classes'], payments:['students']}[kind] || [];
+        const options = await Promise.all(required.map(key=>api('/api/options?kind='+key)));
+        if (kind === 'students' && row.student_id) row = await api('/api/student-detail?id='+row.student_id);
+        if (request !== editorRequest || token !== generation) return;
+        required.forEach((key,index)=>{state[key]=options[index]});
+        ({students:studentEditor, teachers:teacherEditor, courses:courseEditor,
+          classes:classEditor, enrollments:enrollmentEditor, payments:paymentEditor}[kind])(row);
+    } catch(error) {
+        if (request === editorRequest && token === generation) toast(error.message);
+    }
+}
+$('#primary').onclick=()=>prepareEditor(page);
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b)return;const id=Number(b.dataset.id);try{switch(b.dataset.action){case 'retry':await render();break;case 'student.edit':await prepareEditor('students',state.students.find(r=>r.student_id===id));break;case 'student.history':await studentHistory(id);break;case 'teacher.edit':await prepareEditor('teachers',state.teachers.find(r=>r.teacher_id===id));break;case 'course.edit':await prepareEditor('courses',state.courses.find(r=>r.course_id===id));break;case 'class.edit':await prepareEditor('classes',state.classes.find(r=>r.class_id===id));break;case 'class.roster':await classRoster(id);break;case 'class.schedule':await scheduleEditor(id);break;case 'enrollment.edit':enrollmentStatus(state.enrollments.find(r=>r.enrollment_id===id));break;case 'payment.paid':paymentStatusEditor(id,'PAID');break;case 'payment.refund':paymentStatusEditor(id,'REFUNDED');break}}catch(err){toast(err.message)}});
 $('.skip').addEventListener('click',e=>{e.preventDefault();$('#main').focus()});
 const loginForm = $('#login-form');
 const profileMenu = $('#profile-menu');

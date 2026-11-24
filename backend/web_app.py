@@ -101,6 +101,24 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(401, {'error': '관리자 로그인이 필요합니다.'})
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         try:
+            lists = {
+                '/api/students': db.list_student_summaries,
+                '/api/teachers': db.list_teacher_summaries,
+                '/api/courses': db.list_course_summaries,
+                '/api/classes': db.list_classes,
+                '/api/enrollments': db.list_enrollments,
+            }
+            if url.path in lists:
+                return self.send(200, records(lists[url.path]()))
+            if url.path == '/api/grade-levels':
+                return self.send(200, db.GRADE_LEVELS)
+            if url.path == '/api/options':
+                return self.send(200, records(db.list_options(q.get('kind'))))
+            if url.path == '/api/student-detail':
+                student = db.get_student(int(q['id']))
+                return self.send(200, dict(student)) if student else self.send(404, {'error': '학생을 찾을 수 없습니다.'})
+            if url.path == '/api/dashboard':
+                return self.send(200, db.dashboard_summary())
             if url.path == '/api/state':
                 return self.send(200, {k: records(fn()) for k, fn in (
                     ('students', db.list_students), ('teachers', db.list_teachers),

@@ -10,3 +10,15 @@ env/
 
 # OS
 .DS_Store
+
+# Local database backups
+.local-backups/
+
+# Local connection secrets
+.env
+.env.*
+!.env.example
+
+# Local test notes
+exception-test-sql.md
+exception-tet-sql.md
