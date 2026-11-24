@@ -1,14 +1,12 @@
 #!/bin/sh
 set -eu
 
-reader_password=${ACADEMY_MYSQL_READER_PASSWORD:-}
-if [ -z "$reader_password" ]; then
-    exit 0
-fi
+reader_password=${ACADEMY_MYSQL_READER_PASSWORD:-user}
 
 case "$reader_password" in
+    user) ;;
     *[!0-9a-fA-F]*)
-        echo 'ACADEMY_MYSQL_READER_PASSWORD must be hexadecimal.' >&2
+        echo 'ACADEMY_MYSQL_READER_PASSWORD must be user or hexadecimal.' >&2
         exit 1
         ;;
 esac
