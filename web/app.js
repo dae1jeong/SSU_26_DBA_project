@@ -71,13 +71,19 @@ function sortTable(button){
     const header=button.closest('th'),table=header.closest('table'),body=table.tBodies[0];
     const ascending=header.getAttribute('aria-sort')!=='ascending';
     const value=row=>row.cells[header.cellIndex].textContent.trim();
+    const gradeOrder = button.firstElementChild.textContent === '학년'
+        ? new Map(state.grade_levels.map((grade, index) => [grade, index]))
+        : null;
     const missing=v=>!v||v==='—'||v==='-';
     const pagination = paginatedTables.get(table);
     const rows = pagination?.rows ?? Array.from(body.rows).filter(row=>!row.querySelector('td.empty'));
     rows.sort((a,b)=>{
         const av=value(a),bv=value(b);
         if(missing(av)||missing(bv))return Number(missing(av))-Number(missing(bv));
-        return compareTableValues(av,bv)*(ascending?1:-1);
+        const comparison = gradeOrder?.has(av) && gradeOrder.has(bv)
+            ? gradeOrder.get(av) - gradeOrder.get(bv)
+            : compareTableValues(av,bv);
+        return comparison*(ascending?1:-1);
     });
     if (pagination) pagination.reset();
     else rows.forEach(row=>body.appendChild(row));
