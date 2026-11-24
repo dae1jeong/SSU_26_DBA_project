@@ -331,6 +331,10 @@ INSERT INTO class (class_id, course_id, teacher_id, grade, class_name) VALUES
   (9, 4, 4, NULL, '여름방학 특강 판서반 1-2 심화'),
   (10, 5, 6, NULL, '공통수학1 모의고사반');
 
+INSERT INTO short_course (class_id, start_date, end_date) VALUES
+  (9, '2026-07-20', '2026-08-21'),
+  (10, '2026-11-01', '2026-12-31');
+
 INSERT INTO enrollment (enrollment_id, student_id, class_id, enrolled_date, status) VALUES
 (1, 1, 1, '2026-10-26', 'ACTIVE'),
 (2, 2, 1, '2026-10-27', 'ACTIVE'),
