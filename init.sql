@@ -285,4 +285,68 @@ BEGIN
     CALL sp_sync_expired_short_courses();
 END$$
 
+-- 9-3. 블랙리스트 학생 수강 등록·결제 차단
+-- 블랙리스트 학생의 신규 수강/청구 및 재활성화/완납 차단.
+-- 기존 이력, 취소/수료 및 환불 처리는 유지한다.
+CREATE TRIGGER trg_enrollment_block_black_insert
+BEFORE INSERT ON enrollment
+FOR EACH ROW
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM student
+        WHERE student_id = NEW.student_id AND student_classification = 'BLACK'
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = '블랙리스트 학생은 수강 등록이 불가합니다.';
+    END IF;
+END$$
+
+CREATE TRIGGER trg_enrollment_block_black_update
+BEFORE UPDATE ON enrollment
+FOR EACH ROW
+BEGIN
+    IF (NEW.student_id <> OLD.student_id
+        OR NEW.class_id <> OLD.class_id
+        OR (NEW.status = 'ACTIVE' AND OLD.status <> 'ACTIVE'))
+       AND EXISTS (
+           SELECT 1 FROM student
+           WHERE student_id = NEW.student_id AND student_classification = 'BLACK'
+       ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = '블랙리스트 학생은 수강 등록이 불가합니다.';
+    END IF;
+END$$
+
+CREATE TRIGGER trg_payment_block_black_insert
+BEFORE INSERT ON payment
+FOR EACH ROW
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM enrollment e
+        JOIN student s ON s.student_id = e.student_id
+        WHERE e.enrollment_id = NEW.enrollment_id
+          AND s.student_classification = 'BLACK'
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = '블랙리스트 학생은 결제가 불가합니다.';
+    END IF;
+END$$
+
+CREATE TRIGGER trg_payment_block_black_update
+BEFORE UPDATE ON payment
+FOR EACH ROW
+BEGIN
+    IF (NEW.enrollment_id <> OLD.enrollment_id
+        OR (NEW.status = 'PAID' AND OLD.status <> 'PAID'))
+       AND EXISTS (
+           SELECT 1 FROM enrollment e
+           JOIN student s ON s.student_id = e.student_id
+           WHERE e.enrollment_id = NEW.enrollment_id
+             AND s.student_classification = 'BLACK'
+       ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = '블랙리스트 학생은 결제가 불가합니다.';
+    END IF;
+END$$
+
 DELIMITER ;
